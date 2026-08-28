@@ -1,0 +1,157 @@
+PolyForm Noncommercial License 1.0.0
+
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
+
+#### Source
+
+This license was built by adapting the PolyForm Strict License, which was
+built on the NonCommercial licenses from Creative Commons and the
+BlueOak Model License 1.0.0.
+
+#### About this License
+
+This license is designed for software whose author wants to ensure that
+the work, and any derivatives of the work, remain available for
+non-commercial use, but cannot be used commercially.
+
+#### Copyright
+
+Each contributor licenses you their contributions to this software under
+this License, as defined below.
+
+#### (a) "Contributor" means each individual or legal entity that creates
+     contributions to the software.
+
+#### (b) "Software" means the work distributed under this License, as it
+     exists on the date this License is applied.
+
+#### (c) "License" means this PolyForm Noncommercial License 1.0.0.
+
+#### (d) "You" or "Your" means any individual person or legal entity
+     exercising rights under this License.
+
+#### (e) "Your License" means this License, as applied to Your copyright
+     in the Software, plus any modifications You make.
+
+#### (f) "Commercial Purpose" means any use of the Software for the
+     purpose of, or in furtherance of, gaining commercial advantage or
+     monetary compensation. "Commercial Purpose" does NOT include:
+
+  1. personal study, learning, or research;
+  2. teaching in an academic or classroom setting;
+  3. internal use by a non-profit organization;
+  4. publishing research results that include output from the Software,
+     provided the Software itself is not sold or licensed for a fee;
+  5. use of the Software in the course of providing free, open-source
+     security research tools to the public; or
+  6. use of the Software by a malware analyst or incident responder in
+     the course of analyzing suspicious files for defensive or
+     educational purposes, whether or not the analyst is paid for that
+     work, provided the Software itself is not being resold or licensed
+     for a fee.
+
+#### License Terms
+
+1. Copyright
+
+   a. Subject to the terms of this License, each Contributor grants You
+      a non-exclusive, worldwide, royalty-free copyright license to
+      reproduce, prepare derivative works of, publicly display, publicly
+      perform, and distribute the Software and any derivative works of
+      the Software, in source code or binary form, for any purpose that
+      is not a Commercial Purpose.
+
+   b. Any derivative works that You create must be licensed under this
+      License or a license that contains the same non-commercial
+      restriction as this License.
+
+2. Patent
+
+   a. Subject to the terms of this License, each Contributor grants You
+      a non-exclusive, worldwide, royalty-free patent license to make,
+      use, and sell the Software for any purpose that is not a
+      Commercial Purpose. The patent license covers only those patent
+      claims that the Contributor can license.
+
+   b. If You institute patent litigation against any entity (including
+      a cross-claim or counterclaim in a lawsuit) alleging that the
+      Software, in whole or in part, infringes any patent, then any
+      patent license granted to You under this License for the Software
+      terminates automatically as of the date the litigation is filed.
+
+3. Distribution
+
+   a. If You distribute copies of the Software, modified or unmodified,
+      in source code or binary form, You must:
+
+      i.   give all recipients a copy of this License; and
+      ii.  preserve all copyright, patent, trademark, and attribution
+           notices in the Software and in any derivative works; and
+      iii. not charge a fee for the Software itself.
+
+   b. You may not sublicense the Software under different terms without
+      the prior written permission of the Copyright Holder.
+
+4. Commercial Use
+
+   a. You may not use the Software, in whole or in part, for any
+      Commercial Purpose.
+
+   b. "Commercial Purpose" is defined above in paragraph (f). If You are
+      unsure whether a particular use is commercial, contact the
+      Copyright Holder for clarification.
+
+5. Trademark
+
+   This License does not grant permission to use the trade names,
+   trademarks, service marks, or product names of the Licensor, except
+   as required to describe the origin of the Software and reproducing
+   the content of any notice file included in the distribution of the
+   Software.
+
+6. Notices
+
+   You must preserve all copyright, patent, trademark, and attribution
+   notices in the Software and in any derivative works.
+
+7. Disclaimer of Warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+   NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+   BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+   ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
+   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+8. Limitation of Liability
+
+   In no event and under no legal theory, whether in tort (including
+   negligence), contract, or otherwise, unless required by applicable
+   law (such as deliberate and grossly negligent acts), or agreed to in
+   writing, shall any Contributor be liable to You for damages,
+   including any direct, indirect, special, incidental, or
+   consequential damages of any character arising as a result of this
+   License or out of the use of or inability to use the Software
+   (including but not limited to damages for loss of goodwill, work
+   stoppage, computer failure or malfunction, or any and all other
+   commercial damages or losses), even if the Contributor has been
+   advised of the possibility of such damages.
+
+9. No Waiver
+
+   No failure or delay by the Licensor in exercising any right or
+   remedy under this License will be a waiver of that right or remedy.
+
+10. Entire Agreement
+
+    This License constitutes the entire agreement between the parties
+    with respect to the subject matter hereof.
+
+---
+
+Copyright (c) 2026 whoamicrash
+
+For questions about commercial licensing or to request a commercial
+license, contact the copyright holder through the project repository.
