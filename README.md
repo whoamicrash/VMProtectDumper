@@ -1,6 +1,6 @@
 # VMProtect Dumper
 
-> A single-file Windows security-research tool for unpacking VMProtect-protected PE files (EXE / DLL / OCX / CPL) from memory, reconstructing OEP and IAT, harvesting dynamically allocated executable regions, and packaging the artefacts into a password-protected archive for safe handling.
+Windows security-research tool for unpacking VMProtect-protected PE files (EXE / DLL / OCX / CPL) from memory, reconstructing OEP and IAT, harvesting dynamically allocated executable regions, and packaging the artefacts into a password-protected archive for safe handling.
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20NC%201.0.0-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%20x86%20%2F%20x64-lightgrey.svg)](#)
