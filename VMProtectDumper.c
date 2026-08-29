@@ -60,7 +60,6 @@ typedef struct {
     int     import_idx;
 } IATSlotEntry;
 
-/* === Memory Harvester v5.0 structures === */
 typedef struct {
     DWORD64   base_addr;
     SIZE_T    size;
