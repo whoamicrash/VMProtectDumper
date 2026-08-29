@@ -600,3 +600,6 @@ See [LICENSE](LICENSE) for the full text.
 
  **VMProtect** is a trademark of VMProtect Software; this project is independent and not affiliated with or endorsed by VMProtect Software.
 - Inspired by the workflow of Scylla, ImpRec, LordPE, and the broader malware-analysis community.
+
+## Telegram
+[@hackerebanatik](https://t.me/hackerebanatik )
