@@ -1,7 +1,3 @@
-/*
- * gcc -O2 -s -static -o vmprotect_dumper_x64.exe VMProtectDumper.c
- */
-
 #include <windows.h>
 #include <tlhelp32.h>
 #include <stdio.h>
@@ -28,13 +24,13 @@
 #define MAX_IAT_SLOTS       8192
 #define OEP_SCAN_SIZE       4096
 
-/* Memory Harvester v5.0 constants */
+                                     
 #define MAX_DYNAMIC_REGIONS      256
 #define REGION_FP_SIZE           64
-#define HARVEST_SNAP_INTERVAL    10    /* every 10 ticks = 500ms */
-#define HARVEST_BEHAV_INTERVAL   40    /* every 40 ticks = 2s */
-#define HARVEST_REGION_THRESHOLD 3     /* trigger dump after 3+ new regions */
-#define HARVEST_SETTLE_MS        3000  /* wait after trigger for packer to finish */
+#define HARVEST_SNAP_INTERVAL    10                                
+#define HARVEST_BEHAV_INTERVAL   40                             
+#define HARVEST_REGION_THRESHOLD 3                                            
+#define HARVEST_SETTLE_MS        3000                                               
 #define PESIEVE_TIMEOUT_MS       60000
 
 typedef struct {
@@ -65,36 +61,36 @@ typedef struct {
     SIZE_T    size;
     DWORD     protect;
     BYTE      fingerprint[REGION_FP_SIZE];
-    int       snapshot_first;   /* snapshot index when first seen */
-    int       snapshot_last;    /* last snapshot where present */
-    int       fp_changed;       /* fingerprint changed since first seen */
-    int       dumped;           /* already written to disk */
+    int       snapshot_first;                                       
+    int       snapshot_last;                                     
+    int       fp_changed;                                                 
+    int       dumped;                                        
 } DynamicRegion;
 
 typedef struct {
     DynamicRegion regions[MAX_DYNAMIC_REGIONS];
     int           count;
-    int           index;        /* monotonically increasing snapshot number */
+    int           index;                                                      
     DWORD         tick_ms;
 } RegionSnapshot;
 
 typedef struct {
     RegionSnapshot current;
     RegionSnapshot previous;
-    /* Cumulative union of all regions ever seen (for final dump) */
+                                                                    
     DynamicRegion  all_seen[MAX_DYNAMIC_REGIONS * 2];
     int            all_seen_count;
-    /* Per-cycle deltas */
+                          
     int  new_this_cycle;
     int  disappeared;
     int  fp_changes;
-    /* Behavioral trigger */
+                            
     int  behavioral_trigger;
     int  new_file_count;
-    /* Timeline log */
-    char timeline[64][256];     /* up to 64 timeline entries */
+                      
+    char timeline[64][256];                                    
     int  timeline_count;
-    /* PE-sieve */
+                  
     int  pesieve_ran;
     int  pesieve_exit_code;
     int  pesieve_file_count;
@@ -127,9 +123,9 @@ static int          g_oep_captured = 0;
 static DWORD        g_oep_thread_rva = 0;
 static DWORD        g_oep_crt_rva = 0;
 
-/* Memory Harvester globals */
+                              
 static HarvestState g_harvest;
-static int          g_harvest_enabled = 1;   /* on by default for dump mode */
+static int          g_harvest_enabled = 1;                                    
 #define MAX_WATCH_DIRS_FWD  16
 static char     g_harvest_watch_dirs[MAX_WATCH_DIRS_FWD][MAX_PATH];
 static int      g_harvest_watch_count = 0;
@@ -169,8 +165,8 @@ typedef NTSTATUS (NTAPI *pfnNtQueryInformationProcess)(
 
 static pfnNtQueryInformationProcess g_NtQueryInformationProcess = NULL;
 
-/* detect_target_architecture_vmp: reads PEB to find image base of an attached process.
-   Used by dropper mode when we attach to a process we didn't create suspended. */
+                                                                                       
+                                                                                  
 static int detect_target_architecture_vmp(HANDLE hProcess, DWORD64 *out_image_base)
 {
     SIZE_T nread;
@@ -368,7 +364,7 @@ static int read_pe_sections(HANDLE hProc, DWORD64 base)
 
     g_machine = machine;
 
-    /* capture SizeOfImage early (needed by capture_oep before dump_full_image) */
+                                                                                  
     if (machine == 0x8664) {
         g_size_of_image = *(DWORD*)(pe + 24 + 56);
     } else {
@@ -466,16 +462,16 @@ static int check_changes(HANDLE hProc, DWORD64 base)
     return total;
 }
 
-/* ------- OEP capture: thread IP + CRT pattern scan ------- */
+                                                               
 
-/* OEP scan: multi-pass with priority.
-   Pass 1 (highest): MSVC SEH setup  6A FF 68 xx xx xx xx 64 A1 00 00 00 00
-   Pass 2: security_init_cookie      E8 xx xx xx xx E9 xx xx xx xx (call+jmp at page boundary)
-   Pass 3: x64 CRT                   48 83 EC 28 ... E8 (sub rsp,28h + call)
-   Pass 4 (lowest): Delphi/generic   55 8B EC 83 EC (push ebp; mov ebp,esp; sub esp) ONLY at offset 0
-   Scans entire section, not just first 4KB. */
+                                      
+                                                                           
+                                                                                              
+                                                                            
+                                                                                                     
+                                               
 
-#define OEP_MAX_SCAN  (256 * 1024)  /* scan up to 256KB per section */
+#define OEP_MAX_SCAN  (256 * 1024)                                    
 
 static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
 {
@@ -484,9 +480,9 @@ static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
 
     for (int i = 0; i < g_num_sections; i++) {
         SectionInfo *si = &g_sections[i];
-        /* only scan sections that were zeroed on disk and got populated */
+                                                                           
         if (!si->was_zeroed || !si->changed) continue;
-        /* must be executable */
+                                
         if (!(si->characteristics & 0x20000000)) continue;
         if (si->vsize == 0) continue;
 
@@ -505,7 +501,7 @@ static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
         for (DWORD off = 0; off + 16 <= scan_len; off++) {
 
             if (g_machine == 0x8664) {
-                /* --- x64 Pass 3: sub rsp, 28h (48 83 EC 28) + call within 20 bytes --- */
+                                                                                           
                 if (pass3 == 0 &&
                     buf[off] == 0x48 && buf[off+1] == 0x83 &&
                     buf[off+2] == 0xEC && buf[off+3] == 0x28) {
@@ -519,10 +515,10 @@ static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
                     }
                 }
             } else {
-                /* --- x86 Pass 1 (HIGHEST): MSVC SEH chain setup ---
-                   6A FF              push -1
-                   68 xx xx xx xx     push __ehhandler
-                   64 A1 00 00 00 00  mov eax, fs:[0]   */
+                                                                     
+                                             
+                                                      
+                                                          
                 if (pass1 == 0 && off + 13 <= scan_len &&
                     buf[off]   == 0x6A && buf[off+1] == 0xFF &&
                     buf[off+2] == 0x68 &&
@@ -534,23 +530,23 @@ static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
                            (unsigned long)pass1);
                 }
 
-                /* --- x86 Pass 2: call + jmp at page-aligned address ---
-                   E8 xx xx xx xx   call __security_init_cookie
-                   E9 xx xx xx xx   jmp  __tmainCRTStartup       */
+                                                                         
+                                                               
+                                                                   
                 if (pass2 == 0 && off + 10 <= scan_len &&
-                    (off & 0xFFF) == 0 &&  /* must be page-aligned */
+                    (off & 0xFFF) == 0 &&                            
                     buf[off] == 0xE8 && buf[off+5] == 0xE9) {
                     pass2 = si->rva + off;
                     printf("[+] CRT scan: call+jmp (security_init_cookie) at RVA=0x%08lX\n",
                            (unsigned long)pass2);
                 }
 
-                /* --- x86 Pass 2b: call + jmp NOT page-aligned but with
-                   distinctive E8..E9 back-to-back (5+5 = 10 bytes total) ---
-                   Some linkers place the cookie trampoline off-page. */
+                                                                        
+                                                                             
+                                                                        
                 if (pass2 == 0 && off + 10 <= scan_len &&
                     buf[off] == 0xE8 && buf[off+5] == 0xE9) {
-                    /* verify the call target is within .text (not a wild pointer) */
+                                                                                     
                     INT32 call_rel = *(INT32*)(buf + off + 1);
                     DWORD call_target = si->rva + off + 5 + call_rel;
                     if (call_target >= si->rva && call_target < si->rva + si->vsize) {
@@ -560,9 +556,9 @@ static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
                     }
                 }
 
-                /* --- x86 Pass 4 (LOWEST): push ebp; mov ebp, esp; sub esp ---
-                   55 8B EC 83 EC xx  or  55 8B EC 81 EC xx xx xx xx
-                   Only at offset 0 of the section (the very first function) --- */
+                                                                               
+                                                                    
+                                                                                   
                 if (pass4 == 0 && off == 0 && off + 6 <= scan_len &&
                     buf[0] == 0x55 && buf[1] == 0x8B && buf[2] == 0xEC &&
                     (buf[3] == 0x83 || buf[3] == 0x81) && buf[4] == 0xEC) {
@@ -574,11 +570,11 @@ static DWORD scan_crt_pattern(HANDLE hProc, DWORD64 base)
         }
         free(buf);
 
-        /* early exit if we found the highest priority match */
+                                                               
         if (pass1 != 0) break;
     }
 
-    /* return highest priority match */
+                                       
     if (pass1 != 0) {
         printf("[+] OEP selected: SEH setup (pass 1) RVA=0x%08lX\n", (unsigned long)pass1);
         return pass1;
@@ -606,7 +602,7 @@ static void capture_oep(HANDLE hProc, HANDLE hThread, DWORD64 base, DWORD soi)
 
     printf("\n[*] Capturing OEP...\n");
 
-    /* Step 1: read instruction pointer from suspended thread */
+                                                                
     if (hThread) {
         CONTEXT ctx;
         memset(&ctx, 0, sizeof(ctx));
@@ -631,10 +627,10 @@ static void capture_oep(HANDLE hProc, HANDLE hThread, DWORD64 base, DWORD soi)
         }
     }
 
-    /* Step 2: scan for CRT startup patterns in unpacked code sections */
+                                                                         
     crt_rva = scan_crt_pattern(hProc, base);
 
-    /* Step 3: choose best OEP */
+                                 
     g_oep_thread_rva = thread_rva;
     g_oep_crt_rva = crt_rva;
 
@@ -660,7 +656,7 @@ static void capture_oep(HANDLE hProc, HANDLE hThread, DWORD64 base, DWORD soi)
     }
 }
 
-/* ------- Section and image dumping ------- */
+                                               
 
 static int dump_section(HANDLE hProc, DWORD64 base, SectionInfo *si, int idx)
 {
@@ -756,7 +752,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
     if (pe_off + 256 < soi) {
         BYTE *pe = buf + pe_off;
 
-        /* --- Fix ImageBase to runtime value --- */
+                                                    
         if (machine == 0x8664) {
             *(DWORD64*)(pe + 24 + 24) = base;
         } else {
@@ -767,7 +763,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
         WORD os = *(WORD*)(pe + 20);
         BYTE *st = pe + 24 + os;
 
-        /* --- Fix section headers: self-mapping (RawAddr=RVA, RawSize=VSize) --- */
+                                                                                    
         for (int i = 0; i < ns && i < MAX_SECTIONS; i++) {
             BYTE *s = st + i * 40;
             DWORD vs  = *(DWORD*)(s + 8);
@@ -778,7 +774,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
 
         printf("\n[*] Repairing PE headers...\n");
 
-        /* --- Fix AddressOfEntryPoint to captured OEP --- */
+                                                             
         DWORD orig_ep = *(DWORD*)(pe + 24 + 16);
         if (g_oep_rva != 0 && g_oep_rva != orig_ep) {
             *(DWORD*)(pe + 24 + 16) = g_oep_rva;
@@ -787,7 +783,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
             printf("[!] OEP not captured, EntryPoint unchanged: 0x%08X\n", orig_ep);
         }
 
-        /* --- Fix FileAlignment = SectionAlignment (self-mapping) --- */
+                                                                         
         DWORD sec_align  = *(DWORD*)(pe + 24 + 32);
         DWORD file_align = *(DWORD*)(pe + 24 + 36);
         if (file_align != sec_align) {
@@ -796,7 +792,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
                    file_align, sec_align);
         }
 
-        /* --- Fix SizeOfHeaders (align to new FileAlignment) --- */
+                                                                    
         DWORD soh = *(DWORD*)(pe + 24 + 60);
         DWORD aligned_soh = (soh + sec_align - 1) & ~(sec_align - 1);
         if (aligned_soh != soh) {
@@ -804,10 +800,10 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
             printf("[+] SizeOfHeaders fixed: 0x%X -> 0x%X\n", soh, aligned_soh);
         }
 
-        /* --- Zero the checksum --- */
+                                       
         *(DWORD*)(pe + 24 + 64) = 0;
 
-        /* --- Handle relocations --- */
+                                        
         int has_reloc = 0;
         for (int i = 0; i < ns && i < MAX_SECTIONS; i++) {
             BYTE *s = st + i * 40;
@@ -819,7 +815,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
         if (!has_reloc) {
             WORD chars = *(WORD*)(pe + 22);
             if (!(chars & 0x0001)) {
-                *(WORD*)(pe + 22) = chars | 0x0001; /* IMAGE_FILE_RELOCS_STRIPPED */
+                *(WORD*)(pe + 22) = chars | 0x0001;                                 
                 printf("[+] No .reloc section -- RELOCS_STRIPPED set, base pinned at 0x%llX\n",
                        (unsigned long long)base);
             }
@@ -828,7 +824,7 @@ static void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
             *(DWORD*)(pe + reloc_dd_off + 4) = 0;
         }
 
-        /* --- Disable ASLR (DynamicBase) so fixed ImageBase is honored --- */
+                                                                              
         int dllchars_off = (machine == 0x8664) ? (24 + 70) : (24 + 70);
         WORD dllchars = *(WORD*)(pe + dllchars_off);
         if (dllchars & 0x0040) {
@@ -1011,7 +1007,7 @@ static void scan_for_iat_entries(HANDLE hProc, DWORD64 base)
         ImportEntry *e = &g_imports[i];
         if (e->function[0] == '\0') continue;
 
-        /* check if we found an IAT slot for this import */
+                                                           
         DWORD slot_rva = 0;
         for (int s = 0; s < g_iat_slot_count; s++) {
             if (g_iat_slots[s].import_idx == (int)i) {
@@ -1040,13 +1036,13 @@ static void scan_for_iat_entries(HANDLE hProc, DWORD64 base)
     printf("[+] Import catalog: %d entries -> %s\n", written, report_path);
 }
 
-/* ------- IAT thunk resolver: follow VMProtect thunks to real APIs ------- */
+                                                                              
 
 typedef struct {
-    DWORD   iat_rva;        /* RVA of the IAT slot in the PE */
-    DWORD64 thunk_addr;     /* VMProtect thunk address (original IAT value) */
-    DWORD64 resolved_addr;  /* Real API address after following thunks */
-    int     import_idx;     /* Index into g_imports[] (-1 if not matched) */
+    DWORD   iat_rva;                                           
+    DWORD64 thunk_addr;                                                       
+    DWORD64 resolved_addr;                                               
+    int     import_idx;                                                     
     char    module[128];
     char    function[256];
 } ResolvedIATEntry;
@@ -1055,8 +1051,8 @@ typedef struct {
 static ResolvedIATEntry g_resolved_iat[MAX_IAT_RESOLVED];
 static int g_resolved_iat_count = 0;
 
-/* Follow a chain of jumps/thunks to find the real target address.
-   Returns the final address, or 0 if we can't follow it. */
+                                                                  
+                                                            
 static DWORD64 follow_thunk_chain(HANDLE hProc, DWORD64 addr, DWORD64 img_base, DWORD img_size)
 {
     BYTE code[16];
@@ -1064,18 +1060,18 @@ static DWORD64 follow_thunk_chain(HANDLE hProc, DWORD64 addr, DWORD64 img_base, 
     int max_hops = 16;
 
     for (int hop = 0; hop < max_hops; hop++) {
-        /* if address is outside the image, it's a real API (or at least not a VMP thunk) */
+                                                                                            
         if (addr < img_base || addr >= img_base + img_size)
             return addr;
 
         if (!ReadProcessMemory(hProc, (LPCVOID)addr, code, sizeof(code), &nr) || nr < 6)
             return 0;
 
-        /* Pattern: FF 25 xx xx xx xx  = jmp dword ptr [addr32] (x86 indirect) */
+                                                                                 
         if (code[0] == 0xFF && code[1] == 0x25) {
             DWORD target_ptr;
 #ifdef _WIN64
-            /* RIP-relative: target = addr + 6 + disp32 */
+                                                          
             DWORD disp = *(DWORD*)(code + 2);
             target_ptr = 0;
             DWORD64 ptr_addr = addr + 6 + (INT32)disp;
@@ -1084,7 +1080,7 @@ static DWORD64 follow_thunk_chain(HANDLE hProc, DWORD64 addr, DWORD64 img_base, 
                 return 0;
             addr = final;
 #else
-            /* Absolute address: target = *[imm32] */
+                                                     
             DWORD ptr_addr = *(DWORD*)(code + 2);
             DWORD final;
             if (!ReadProcessMemory(hProc, (LPCVOID)(DWORD64)ptr_addr, &final, 4, &nr))
@@ -1094,36 +1090,36 @@ static DWORD64 follow_thunk_chain(HANDLE hProc, DWORD64 addr, DWORD64 img_base, 
             continue;
         }
 
-        /* Pattern: E9 xx xx xx xx = jmp rel32 */
+                                                 
         if (code[0] == 0xE9) {
             INT32 rel = *(INT32*)(code + 1);
             addr = addr + 5 + rel;
             continue;
         }
 
-        /* Pattern: EB xx = jmp rel8 (short jump) */
+                                                    
         if (code[0] == 0xEB) {
             INT8 rel = (INT8)code[1];
             addr = addr + 2 + rel;
             continue;
         }
 
-        /* Pattern: 68 xx xx xx xx C3 = push imm32; ret (push/ret thunk) */
+                                                                           
         if (code[0] == 0x68 && code[5] == 0xC3) {
             DWORD target = *(DWORD*)(code + 1);
             addr = (DWORD64)target;
             continue;
         }
 
-        /* Pattern: FF E0..FF E7 = jmp reg -- can't follow without register context */
+                                                                                      
         if (code[0] == 0xFF && (code[1] >= 0xE0 && code[1] <= 0xE7))
             return 0;
 
-        /* Not a recognizable thunk pattern, treat current addr as final */
+                                                                           
         return addr;
     }
 
-    return 0; /* too many hops */
+    return 0;                    
 }
 
 static void resolve_iat_thunks(HANDLE hProc, DWORD64 base)
@@ -1177,14 +1173,14 @@ static void resolve_iat_thunks(HANDLE hProc, DWORD64 base)
         else
             slot_val = *(DWORD*)(iat_buf + i * ptr_size);
 
-        if (slot_val == 0) continue; /* NULL terminator between DLL groups */
+        if (slot_val == 0) continue;                                         
 
         DWORD slot_rva = iat_rva + i * ptr_size;
         int is_internal = (slot_val >= base && slot_val < base + img_size);
 
         DWORD64 final_addr = slot_val;
         if (is_internal) {
-            /* This is a VMProtect thunk -- follow it */
+                                                        
             final_addr = follow_thunk_chain(hProc, slot_val, base, img_size);
             if (final_addr != 0 && final_addr != slot_val)
                 thunk_count++;
@@ -1193,9 +1189,9 @@ static void resolve_iat_thunks(HANDLE hProc, DWORD64 base)
         }
 
         if (final_addr == 0 || (final_addr >= base && final_addr < base + img_size))
-            continue; /* couldn't resolve outside the image */
+            continue;                                         
 
-        /* Look up the resolved address in our export catalog */
+                                                                
         int match_idx = -1;
         for (LONG j = 0; j < imp_count; j++) {
             if (g_imports[j].resolved_addr == final_addr) {
@@ -1233,7 +1229,7 @@ static void resolve_iat_thunks(HANDLE hProc, DWORD64 base)
     }
 }
 
-/* Patch the IAT in the dumped PE file on disk with real API addresses */
+                                                                         
 static void patch_dumped_iat(const char *target_name)
 {
     if (g_resolved_iat_count == 0) return;
@@ -1256,13 +1252,13 @@ static void patch_dumped_iat(const char *target_name)
 
     for (int i = 0; i < g_resolved_iat_count; i++) {
         ResolvedIATEntry *re = &g_resolved_iat[i];
-        /* Only patch if we actually resolved to something different */
+                                                                       
         if (re->resolved_addr == re->thunk_addr) continue;
         if (re->resolved_addr == 0) continue;
 
-        /* Seek to the IAT slot RVA in the file.
-           Since we use self-mapping (FileAlignment=SectionAlignment),
-           file offset = RVA */
+                                                
+                                                                      
+                               
         if (fseek(f, (long)re->iat_rva, SEEK_SET) != 0) continue;
 
         if (ptr_size == 8) {
@@ -1283,7 +1279,7 @@ static void patch_dumped_iat(const char *target_name)
         printf("[!] No IAT entries needed patching\n");
 }
 
-/* ------- IAT slot scanner: find where import pointers live in the PE ------- */
+                                                                                 
 
 static void scan_iat_slots(HANDLE hProc, DWORD64 base)
 {
@@ -1292,7 +1288,7 @@ static void scan_iat_slots(HANDLE hProc, DWORD64 base)
 
     printf("\n[*] Scanning PE sections for IAT pointer slots...\n");
 
-    /* build a hash set for fast pre-filtering (low 16 bits of each import addr) */
+                                                                                   
     #define HASH_BUCKETS 65536
     BYTE *hash_set = (BYTE*)calloc(HASH_BUCKETS / 8, 1);
     if (!hash_set) return;
@@ -1308,7 +1304,7 @@ static void scan_iat_slots(HANDLE hProc, DWORD64 base)
     for (int si = 0; si < g_num_sections; si++) {
         SectionInfo *sec = &g_sections[si];
         if (sec->vsize == 0) continue;
-        /* skip very large sections to avoid slowness */
+                                                        
         DWORD scan_size = sec->vsize;
         if (scan_size > 4 * 1024 * 1024) scan_size = 4 * 1024 * 1024;
 
@@ -1327,11 +1323,11 @@ static void scan_iat_slots(HANDLE hProc, DWORD64 base)
 
             if (val == 0) continue;
 
-            /* quick hash check */
+                                  
             WORD h = (WORD)(val & 0xFFFF);
             if (!(hash_set[h / 8] & (1 << (h & 7)))) continue;
 
-            /* full match search */
+                                   
             for (LONG j = 0; j < imp_count; j++) {
                 if (g_imports[j].resolved_addr == val) {
                     if (g_iat_slot_count < MAX_IAT_SLOTS) {
@@ -1350,7 +1346,7 @@ static void scan_iat_slots(HANDLE hProc, DWORD64 base)
     printf("[+] IAT slots found: %d pointer entries in PE sections\n", g_iat_slot_count);
 }
 
-/* ------- dump_metadata.json ------- */
+                                        
 
 static void json_escape(FILE *f, const char *s)
 {
@@ -1369,7 +1365,7 @@ static void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_n
     FILE *f = fopen(path, "w");
     if (!f) return;
 
-    /* read data directories from live process */
+                                                 
     BYTE hdr[4096];
     SIZE_T nr;
     DWORD dd_import_rva = 0, dd_import_size = 0;
@@ -1388,7 +1384,7 @@ static void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_n
         file_align = *(DWORD*)(pe + 24 + 36);
 
         int dd_base = (g_machine == 0x8664) ? (24 + 112) : (24 + 96);
-        /* import = dir[1], iat = dir[12], tls = dir[9], reloc = dir[5], rsrc = dir[2] */
+                                                                                         
         dd_import_rva  = *(DWORD*)(pe + dd_base + 8*1);
         dd_import_size = *(DWORD*)(pe + dd_base + 8*1 + 4);
         dd_rsrc_rva    = *(DWORD*)(pe + dd_base + 8*2);
@@ -1412,9 +1408,9 @@ static void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_n
     fprintf(f, "  \"oep_thread_rva\": \"0x%08X\",\n", g_oep_thread_rva);
     fprintf(f, "  \"oep_crt_rva\": \"0x%08X\",\n", g_oep_crt_rva);
     fprintf(f, "  \"section_alignment\": %u,\n", sec_align);
-    fprintf(f, "  \"file_alignment\": %u,\n", sec_align); /* after fix */
+    fprintf(f, "  \"file_alignment\": %u,\n", sec_align);                
 
-    /* sections */
+                  
     fprintf(f, "  \"sections\": [\n");
     for (int i = 0; i < g_num_sections; i++) {
         SectionInfo *si = &g_sections[i];
@@ -1431,7 +1427,7 @@ static void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_n
     }
     fprintf(f, "  ],\n");
 
-    /* data directories */
+                          
     fprintf(f, "  \"data_directories\": {\n");
     fprintf(f, "    \"import\": {\"rva\": \"0x%08X\", \"size\": \"0x%08X\"},\n",
             dd_import_rva, dd_import_size);
@@ -1445,14 +1441,14 @@ static void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_n
             dd_rsrc_rva, dd_rsrc_size);
     fprintf(f, "  },\n");
 
-    /* import summary */
+                        
     LONG imp_count = g_import_count;
     if (imp_count > MAX_IMPORTS) imp_count = MAX_IMPORTS;
     fprintf(f, "  \"imports_resolved\": %ld,\n", (long)imp_count);
     fprintf(f, "  \"iat_slots_found\": %d,\n", g_iat_slot_count);
     fprintf(f, "  \"iat_thunks_resolved\": %d,\n", g_resolved_iat_count);
 
-    /* resolved IAT (thunk-followed entries) */
+                                               
     fprintf(f, "  \"resolved_iat\": [\n");
     for (int i = 0; i < g_resolved_iat_count; i++) {
         ResolvedIATEntry *re = &g_resolved_iat[i];
@@ -1472,7 +1468,7 @@ static void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_n
     }
     fprintf(f, "  ],\n");
 
-    /* IAT slots (pointer scan results) */
+                                          
     fprintf(f, "  \"iat_slots\": [\n");
     for (int i = 0; i < g_iat_slot_count; i++) {
         IATSlotEntry *sl = &g_iat_slots[i];
@@ -1655,7 +1651,7 @@ static void capture_dropped_files(const char *target_dir)
             is_note = 1;
 
         if (is_note) {
-            /* Skip PE executables — ransom notes are text files, not .exe/.dll */
+                                                                                  
             const char *ext = strrchr(name, '.');
             if (ext && (_stricmp(ext, ".exe") == 0 || _stricmp(ext, ".dll") == 0 ||
                         _stricmp(ext, ".scr") == 0 || _stricmp(ext, ".com") == 0)) {
@@ -1783,15 +1779,15 @@ static void kill_monitor_processes(int kill_vmtools)
     }
 }
 
-/* ================================================================
- *  Memory Harvester v5.0 functions
- * ================================================================ */
+                                                                   
+                                   
+                                                                      
 
 static void harvest_init(void)
 {
     memset(&g_harvest, 0, sizeof(g_harvest));
 
-    /* Set up behavioral watch dirs (common drop locations) */
+                                                              
     g_harvest_watch_count = 0;
     char buf[MAX_PATH];
     if (ExpandEnvironmentStringsA("%USERPROFILE%\\Desktop", buf, MAX_PATH))
@@ -1843,7 +1839,7 @@ static int is_module_region(HANDLE hProc, DWORD64 addr)
 
 static int take_region_snapshot(HANDLE hProc, DWORD64 image_base, DWORD soi)
 {
-    /* Swap current -> previous */
+                                  
     memcpy(&g_harvest.previous, &g_harvest.current, sizeof(RegionSnapshot));
     memset(&g_harvest.current, 0, sizeof(RegionSnapshot));
     g_harvest.current.index = g_harvest.previous.index + 1;
@@ -1872,10 +1868,10 @@ static int take_region_snapshot(HANDLE hProc, DWORD64 image_base, DWORD soi)
             DWORD64 rbase = (DWORD64)(ULONG_PTR)mbi.BaseAddress;
             SIZE_T  rsize = mbi.RegionSize;
 
-            /* Skip regions inside the PE image - we already track those as sections */
+                                                                                       
             int inside_pe = (rbase >= image_base && rbase < pe_end);
 
-            /* Skip known DLL modules */
+                                        
             int is_mod = 0;
             if (!inside_pe) {
                 is_mod = is_module_region(hProc, rbase);
@@ -1889,18 +1885,18 @@ static int take_region_snapshot(HANDLE hProc, DWORD64 image_base, DWORD soi)
                 dr->dumped = 0;
                 dr->fp_changed = 0;
 
-                /* Fingerprint first 64 bytes */
+                                                
                 SIZE_T nread = 0;
                 ReadProcessMemory(hProc, (LPCVOID)(ULONG_PTR)rbase,
                                   dr->fingerprint, REGION_FP_SIZE, &nread);
 
-                /* Check if this region was in previous snapshot */
+                                                                   
                 int was_known = 0;
                 for (int i = 0; i < g_harvest.previous.count; i++) {
                     if (g_harvest.previous.regions[i].base_addr == rbase) {
                         dr->snapshot_first = g_harvest.previous.regions[i].snapshot_first;
                         was_known = 1;
-                        /* Check fingerprint change */
+                                                      
                         if (memcmp(dr->fingerprint,
                                    g_harvest.previous.regions[i].fingerprint,
                                    REGION_FP_SIZE) != 0) {
@@ -1914,7 +1910,7 @@ static int take_region_snapshot(HANDLE hProc, DWORD64 image_base, DWORD soi)
                 }
                 dr->snapshot_last = g_harvest.current.index;
 
-                /* Add to all_seen union if new */
+                                                  
                 if (!was_known && g_harvest.all_seen_count < MAX_DYNAMIC_REGIONS * 2) {
                     memcpy(&g_harvest.all_seen[g_harvest.all_seen_count],
                            dr, sizeof(DynamicRegion));
@@ -1938,7 +1934,7 @@ static int check_region_changes(void)
 {
     int new_count = 0, disappeared = 0, fp_changes = 0;
 
-    /* Find new regions (in current but not in previous) */
+                                                           
     for (int i = 0; i < g_harvest.current.count; i++) {
         DynamicRegion *cr = &g_harvest.current.regions[i];
         int found = 0;
@@ -1966,7 +1962,7 @@ static int check_region_changes(void)
         }
     }
 
-    /* Find disappeared regions */
+                                  
     for (int j = 0; j < g_harvest.previous.count; j++) {
         int found = 0;
         for (int i = 0; i < g_harvest.current.count; i++) {
@@ -1995,7 +1991,7 @@ static int dump_dynamic_regions(HANDLE hProc)
 {
     int dumped = 0;
 
-    /* Dump from the all_seen union - captures even ephemeral regions */
+                                                                        
     for (int i = 0; i < g_harvest.all_seen_count; i++) {
         DynamicRegion *dr = &g_harvest.all_seen[i];
         if (dr->dumped) continue;
@@ -2037,10 +2033,10 @@ static int dump_dynamic_regions(HANDLE hProc)
         free(buf);
     }
 
-    /* Also try to dump current regions that might not be in all_seen yet */
+                                                                            
     for (int i = 0; i < g_harvest.current.count; i++) {
         DynamicRegion *cr = &g_harvest.current.regions[i];
-        /* Check if already dumped via all_seen */
+                                                  
         int already = 0;
         for (int j = 0; j < g_harvest.all_seen_count; j++) {
             if (g_harvest.all_seen[j].base_addr == cr->base_addr &&
@@ -2158,7 +2154,7 @@ static int run_pesieve(DWORD target_pid)
     g_harvest.pesieve_ran = 1;
     g_harvest.pesieve_exit_code = (int)ec;
 
-    /* Count output files */
+                            
     char search[MAX_PATH];
     snprintf(search, sizeof(search), "%s\\*", pesieve_outdir);
     WIN32_FIND_DATAA fd;
@@ -2186,18 +2182,18 @@ static int check_behavioral_trigger(void)
         if (hFind == INVALID_HANDLE_VALUE) continue;
         do {
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-            /* Check if file is new (created after our snapshot baseline) */
+                                                                            
             FILETIME ft = fd.ftCreationTime;
             ULARGE_INTEGER ul;
             ul.LowPart = ft.dwLowDateTime;
             ul.HighPart = ft.dwHighDateTime;
-            /* Files created in last 30 seconds are "new" */
+                                                            
             FILETIME now_ft;
             GetSystemTimeAsFileTime(&now_ft);
             ULARGE_INTEGER now_ul;
             now_ul.LowPart = now_ft.dwLowDateTime;
             now_ul.HighPart = now_ft.dwHighDateTime;
-            if (now_ul.QuadPart - ul.QuadPart < 300000000ULL) { /* 30 sec in 100ns units */
+            if (now_ul.QuadPart - ul.QuadPart < 300000000ULL) {                            
                 new_files++;
             }
         } while (FindNextFileA(hFind, &fd));
@@ -2270,7 +2266,7 @@ static void write_harvest_report(DWORD total_elapsed_ms)
     printf("[+] Harvest report: %s\n", rpath);
 }
 
-/* End of Memory Harvester v5.0 functions */
+                                            
 
 static void dump_all(HANDLE hProc, DWORD64 base, const char *target_name)
 {
@@ -2278,16 +2274,16 @@ static void dump_all(HANDLE hProc, DWORD64 base, const char *target_name)
     for (int i = 0; i < g_num_sections; i++)
         dump_section(hProc, base, &g_sections[i], i);
 
-    dump_full_image(hProc, base, target_name);    /* PE repair included */
-    reconstruct_iat(hProc, base);                  /* build export catalog */
-    resolve_iat_thunks(hProc, base);               /* follow VMP thunks to real APIs */
-    patch_dumped_iat(target_name);                 /* patch IAT in dumped file */
-    scan_iat_slots(hProc, base);                   /* find IAT pointer locations */
-    scan_for_iat_entries(hProc, base);             /* write resolved_imports.txt */
-    write_dump_metadata(hProc, base, target_name); /* write dump_metadata.json */
-    scan_process_strings(hProc);                   /* IOC strings */
+    dump_full_image(hProc, base, target_name);                            
+    reconstruct_iat(hProc, base);                                            
+    resolve_iat_thunks(hProc, base);                                                   
+    patch_dumped_iat(target_name);                                               
+    scan_iat_slots(hProc, base);                                                   
+    scan_for_iat_entries(hProc, base);                                             
+    write_dump_metadata(hProc, base, target_name);                               
+    scan_process_strings(hProc);                                    
 
-    /* Memory Harvester: dump dynamic executable regions */
+                                                           
     if (g_harvest_enabled) {
         printf("\n[*] Memory Harvester: dumping dynamic executable regions...\n");
         dump_dynamic_regions(hProc);
@@ -2730,11 +2726,11 @@ static int create_password_zip(const char *dump_dir)
     return 1;
 }
 
-/* ========================================================================
- * DROPPER MODE: Smart payload targeting (v4.0)
- * Detects if target is VMProtect-packed; if not, watches filesystem +
- * processes for the real packed payload dropped/spawned by the dropper.
- * ======================================================================== */
+                                                                           
+                                               
+                                                                      
+                                                                        
+                                                                              
 
 #define MAX_WATCH_DIRS      16
 #define MAX_SNAPSHOT_FILES   1024
@@ -2772,7 +2768,7 @@ static int      g_watch_dir_count = 0;
 static DWORD    g_baseline_pids[MAX_BASELINE_PIDS];
 static int      g_baseline_pid_count = 0;
 
-/* --- Packer signature check (disk file) --- */
+                                                
 static int check_file_for_packer(const char *filepath, PackerCheckResult *result)
 {
     memset(result, 0, sizeof(*result));
@@ -2786,7 +2782,7 @@ static int check_file_for_packer(const char *filepath, PackerCheckResult *result
     BYTE hdr[4096];
     size_t nread = fread(hdr, 1, sizeof(hdr), f);
 
-    /* Get file size for overlay check */
+                                         
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
     fclose(f);
@@ -2812,7 +2808,7 @@ static int check_file_for_packer(const char *filepath, PackerCheckResult *result
     WORD opt_size = *(WORD*)(pe + 20);
     BYTE *sec_tbl = pe + 24 + opt_size;
 
-    /* Check section names and characteristics for VMProtect markers */
+                                                                       
     DWORD last_section_end = 0;
     for (int i = 0; i < num_secs && i < 32; i++) {
         BYTE *s = sec_tbl + i * 40;
@@ -2828,22 +2824,22 @@ static int check_file_for_packer(const char *filepath, PackerCheckResult *result
         if (raw_off + raw_sz > last_section_end)
             last_section_end = raw_off + raw_sz;
 
-        /* VMProtect detection heuristics */
-        /* 1. Section name containing .vmp */
+                                            
+                                             
         if (strstr(name, ".vmp") || strstr(name, ".VMP") || strstr(name, "vmp")) {
             result->vmp_sections++;
         }
-        /* 2. Large section (>1MB) with high vsize-to-rawsize ratio */
+                                                                      
         if (raw_sz > 0 && vsize > 0x100000 && vsize > raw_sz * 3) {
             result->vmp_sections++;
         }
-        /* 3. Sections with raw_size == 0 and vsize > 0 (zeroed original sections) */
+                                                                                     
         if (vsize > 0 && raw_sz == 0) {
             result->zeroed_sections++;
         }
     }
 
-    /* Overlay check */
+                       
     if (file_size > 0 && last_section_end > 0 && (long)last_section_end < file_size) {
         long overlay_size = file_size - last_section_end;
         if (overlay_size > 4096) {
@@ -2851,7 +2847,7 @@ static int check_file_for_packer(const char *filepath, PackerCheckResult *result
         }
     }
 
-    /* Import count check (minimal imports = likely packed) */
+                                                              
     WORD magic = *(WORD*)(pe + 24);
     DWORD import_rva = 0;
     if (magic == PE32_MAGIC && pe_off + 24 + 104 < nread) {
@@ -2859,10 +2855,10 @@ static int check_file_for_packer(const char *filepath, PackerCheckResult *result
     } else if (magic == PE32PLUS_MAGIC && pe_off + 24 + 120 < nread) {
         import_rva = *(DWORD*)(pe + 24 + 120);
     }
-    /* We can't fully walk imports from just the header, but if import_rva == 0, no imports */
+                                                                                              
     if (import_rva == 0) result->minimal_imports = 1;
 
-    /* Decision */
+                  
     if (result->vmp_sections > 0 || result->zeroed_sections >= 2) {
         result->is_packed = 1;
         snprintf(result->details, sizeof(result->details),
@@ -2881,13 +2877,13 @@ static int check_file_for_packer(const char *filepath, PackerCheckResult *result
     return result->is_packed;
 }
 
-/* --- Filesystem snapshot --- */
+                                 
 static void build_watch_dirs(const char *target_path)
 {
     g_watch_dir_count = 0;
     char buf[MAX_PATH];
 
-    /* Parent dir of target */
+                              
     char parent[MAX_PATH];
     strncpy(parent, target_path, MAX_PATH - 1);
     parent[MAX_PATH - 1] = '\0';
@@ -2896,23 +2892,23 @@ static void build_watch_dirs(const char *target_path)
     if (last) *last = '\0';
     strncpy(g_watch_dirs[g_watch_dir_count++], parent, MAX_PATH);
 
-    /* Desktop */
+                 
     if (ExpandEnvironmentStringsA("%USERPROFILE%\\Desktop", buf, MAX_PATH))
         strncpy(g_watch_dirs[g_watch_dir_count++], buf, MAX_PATH);
 
-    /* TEMP */
+              
     if (ExpandEnvironmentStringsA("%TEMP%", buf, MAX_PATH))
         strncpy(g_watch_dirs[g_watch_dir_count++], buf, MAX_PATH);
 
-    /* APPDATA */
+                 
     if (ExpandEnvironmentStringsA("%APPDATA%", buf, MAX_PATH))
         strncpy(g_watch_dirs[g_watch_dir_count++], buf, MAX_PATH);
 
-    /* LOCALAPPDATA */
+                      
     if (ExpandEnvironmentStringsA("%LOCALAPPDATA%", buf, MAX_PATH))
         strncpy(g_watch_dirs[g_watch_dir_count++], buf, MAX_PATH);
 
-    /* PROGRAMDATA */
+                     
     if (ExpandEnvironmentStringsA("%PROGRAMDATA%", buf, MAX_PATH))
         strncpy(g_watch_dirs[g_watch_dir_count++], buf, MAX_PATH);
 
@@ -2976,7 +2972,7 @@ static int find_new_pe_files(char new_files[][MAX_PATH], int max_results)
             char fullpath[MAX_PATH];
             snprintf(fullpath, sizeof(fullpath), "%s\\%s", g_watch_dirs[d], fd.cFileName);
 
-            /* Check if in baseline */
+                                      
             int in_baseline = 0;
             for (int j = 0; j < g_fs_count; j++) {
                 if (_stricmp(g_fs_snapshot[j].path, fullpath) == 0) {
@@ -2991,7 +2987,7 @@ static int find_new_pe_files(char new_files[][MAX_PATH], int max_results)
         } while (FindNextFileA(hFind, &fd));
         FindClose(hFind);
 
-        /* Also scan new subdirs (one level) */
+                                               
         snprintf(search, sizeof(search), "%s\\*", g_watch_dirs[d]);
         hFind = FindFirstFileA(search, &fd);
         if (hFind == INVALID_HANDLE_VALUE) continue;
@@ -3028,7 +3024,7 @@ static int find_new_pe_files(char new_files[][MAX_PATH], int max_results)
     return found;
 }
 
-/* --- Process enumeration --- */
+                                 
 static void take_process_snapshot(void)
 {
     g_baseline_pid_count = 0;
@@ -3074,7 +3070,7 @@ static int get_process_image_path(DWORD pid, char *path, int path_size)
     HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!hProc) return 0;
 
-    /* Try QueryFullProcessImageNameA (Vista+) */
+                                                 
     typedef BOOL (WINAPI *pfnQueryFullProcessImageNameA)(HANDLE, DWORD, LPSTR, PDWORD);
     static pfnQueryFullProcessImageNameA pQuery = NULL;
     static int resolved = 0;
@@ -3093,7 +3089,7 @@ static int get_process_image_path(DWORD pid, char *path, int path_size)
         }
     }
 
-    /* Fallback: module snapshot */
+                                   
     CloseHandle(hProc);
     HANDLE modSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
     if (modSnap != INVALID_HANDLE_VALUE) {
@@ -3129,20 +3125,20 @@ static HANDLE get_main_thread_handle(DWORD pid)
     return hThread;
 }
 
-/* --- Attach and assess state --- */
+                                     
 static int attach_and_assess(HANDLE hProc, HANDLE hThread, DWORD64 image_base)
 {
-    /* Suspend immediately */
+                             
     if (hThread) SuspendThread(hThread);
 
-    /* Fingerprint sections */
+                              
     if (!read_pe_sections(hProc, image_base)) {
         printf("[-] Cannot read PE sections from attached process\n");
         if (hThread) ResumeThread(hThread);
         return -1;
     }
 
-    /* Check: are sections already decrypted (populated)? */
+                                                            
     int decrypted_count = 0;
     for (int i = 0; i < g_num_sections; i++) {
         SectionInfo *si = &g_sections[i];
@@ -3157,16 +3153,16 @@ static int attach_and_assess(HANDLE hProc, HANDLE hThread, DWORD64 image_base)
     if (decrypted_count >= 2) {
         printf("[+] Sections already decrypted (%d sections with data). Dumping now.\n",
                decrypted_count);
-        return 1;  /* dump immediately */
+        return 1;                        
     } else {
         printf("[*] Sections still encrypted (%d decrypted). Resuming for monitor loop.\n",
                decrypted_count);
         if (hThread) ResumeThread(hThread);
-        return 0;  /* enter poll loop */
+        return 0;                       
     }
 }
 
-/* --- Wait for named process (--wait-for mode) --- */
+                                                      
 static int wait_for_named_process(const char *proc_name, int timeout_sec, TargetInfo *found)
 {
     int ticks = 0;
@@ -3213,7 +3209,7 @@ static int wait_for_named_process(const char *proc_name, int timeout_sec, Target
     return 0;
 }
 
-/* --- Dropper mode (auto-discover packed payload) --- */
+                                                         
 static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *found)
 {
     memset(found, 0, sizeof(*found));
@@ -3222,7 +3218,7 @@ static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *fou
     take_fs_snapshot();
     take_process_snapshot();
 
-    /* Launch sample normally (NOT suspended) */
+                                                
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
@@ -3248,7 +3244,7 @@ static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *fou
         Sleep(DROPPER_POLL_MS);
         ticks++;
 
-        /* Check if dropper still alive */
+                                          
         if (!dropper_exited) {
             DWORD ec;
             if (!GetExitCodeProcess(pi.hProcess, &ec) || ec != STILL_ACTIVE) {
@@ -3261,7 +3257,7 @@ static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *fou
             }
         }
 
-        /* Scan for new PE files on disk */
+                                           
         char new_files[MAX_NEW_FILES][MAX_PATH];
         int nf = find_new_pe_files(new_files, MAX_NEW_FILES);
 
@@ -3270,7 +3266,7 @@ static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *fou
             if (check_file_for_packer(new_files[i], &pr)) {
                 printf("[+] PACKED PE ON DISK: %s (%s)\n", new_files[i], pr.details);
 
-                /* Find matching running process */
+                                                   
                 DWORD new_pids[MAX_NEW_PIDS];
                 int np = find_new_processes(new_pids, MAX_NEW_PIDS);
                 for (int p = 0; p < np; p++) {
@@ -3290,19 +3286,19 @@ static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *fou
                         }
                     }
                 }
-                /* Packed PE on disk but not yet running -- wait a bit more */
+                                                                              
                 printf("[*] Packed PE found but not yet running. Waiting...\n");
             }
         }
 
-        /* Also check new processes directly (file may have been deleted) */
+                                                                            
         DWORD new_pids[MAX_NEW_PIDS];
         int np = find_new_processes(new_pids, MAX_NEW_PIDS);
         for (int p = 0; p < np; p++) {
             char img_path[MAX_PATH];
             if (!get_process_image_path(new_pids[p], img_path, MAX_PATH)) continue;
 
-            /* Skip system processes */
+                                       
             if (strstr(img_path, "\\Windows\\") && !strstr(img_path, "\\Temp\\")) continue;
 
             DWORD file_attr = GetFileAttributesA(img_path);
@@ -3333,7 +3329,7 @@ static int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *fou
     return 0;
 }
 
-/* --- Write dropper mode metadata --- */
+                                         
 static void write_dropper_info(const char *original, const char *payload, DWORD pid,
                                const char *method, float discovery_time)
 {
@@ -3351,7 +3347,7 @@ static void write_dropper_info(const char *original, const char *payload, DWORD 
     printf("[+] Wrote dropper_mode_info.txt\n");
 }
 
-/* ======================================================================== */
+                                                                              
 
 int main(int argc, char *argv[])
 {
@@ -3503,8 +3499,8 @@ int main(int argc, char *argv[])
         }
 
         printf("\n[*] Service DLL loaded. Dumping immediately (already unpacked)...\n");
-        /* service DLLs are already running -- no thread to capture IP from,
-           but we can still scan for CRT patterns */
+                                                                            
+                                                    
         capture_oep(hTargetProc, NULL, g_image_base, g_size_of_image ? g_size_of_image : 0x1000000);
         dump_all(hTargetProc, g_image_base, target);
         capture_dropped_files(target_dir);
@@ -3515,18 +3511,18 @@ int main(int argc, char *argv[])
 
     } else {
 
-        /* === SMART PAYLOAD TARGETING (v4.0) === */
+                                                    
         int skip_monitor = 0;
         int used_dropper_mode = 0;
         char dropper_payload_path[MAX_PATH] = "";
         DWORD dropper_payload_pid = 0;
         float dropper_discovery_time = 0;
 
-        /* Priority 1: --wait-for=process.exe (targeted mode) */
+                                                                
         if (g_wait_for_process[0] != '\0' && !g_is_dll) {
             printf("\n[*] === TARGETED MODE: --wait-for=%s ===\n", g_wait_for_process);
 
-            /* Launch sample normally */
+                                        
             char cmdline[MAX_PATH * 2];
             strncpy(cmdline, target, sizeof(cmdline) - 1);
             cmdline[sizeof(cmdline) - 1] = '\0';
@@ -3567,11 +3563,11 @@ int main(int argc, char *argv[])
             }
             CloseHandle(pi2.hProcess);
 
-        /* Priority 2: --force-direct (skip all smart targeting) */
+                                                                   
         } else if (g_force_direct || g_is_dll) {
             printf("[*] Direct mode (--force-direct or DLL target)\n");
 
-        /* Priority 3: --force-dropper */
+                                         
         } else if (g_force_dropper) {
             printf("\n[*] === FORCED DROPPER MODE ===\n");
             TargetInfo found;
@@ -3592,7 +3588,7 @@ int main(int argc, char *argv[])
                 used_dropper_mode = 1;
             }
 
-        /* Priority 4: Default -- packer check, then dropper if not packed */
+                                                                             
         } else {
             PackerCheckResult packer_result;
             int is_packed = check_file_for_packer(target, &packer_result);
@@ -3624,9 +3620,9 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* === DUMP PHASE === */
+                                
         if (skip_monitor && hTargetProc) {
-            /* Already unpacked -- dump immediately */
+                                                      
             printf("\n[*] Dumping already-decrypted process...\n");
             DWORD skip_pid = GetProcessId(hTargetProc);
             if (g_harvest_enabled) {
@@ -3657,10 +3653,10 @@ int main(int argc, char *argv[])
             if (hTargetThread) CloseHandle(hTargetThread);
 
         } else if (hTargetProc && hTargetThread) {
-            /* Attached to packed process, still encrypted -- enter VMProtect monitor loop */
+                                                                                             
             printf("\n[*] Monitoring attached process for VMProtect decryption...\n");
 
-            /* Memory Harvester: initialize and take baseline snapshot */
+                                                                         
             if (g_harvest_enabled) {
                 harvest_init();
                 detect_pesieve_path();
@@ -3683,7 +3679,7 @@ int main(int argc, char *argv[])
                 int alive = (GetExitCodeProcess(hTargetProc, &ec) && ec == STILL_ACTIVE);
                 int changed = check_changes(hTargetProc, g_image_base);
 
-                /* Harvest: periodic region snapshot */
+                                                       
                 int harvest_trigger = 0;
                 if (g_harvest_enabled && (ticks % HARVEST_SNAP_INTERVAL == 0) && alive) {
                     take_region_snapshot(hTargetProc, g_image_base, g_size_of_image);
@@ -3692,7 +3688,7 @@ int main(int argc, char *argv[])
                         harvest_trigger = 1;
                 }
 
-                /* Harvest: periodic behavioral check */
+                                                        
                 if (g_harvest_enabled && (ticks % HARVEST_BEHAV_INTERVAL == 0) && alive) {
                     check_behavioral_trigger();
                     if (g_harvest.behavioral_trigger && g_harvest.current.count > 0)
@@ -3704,7 +3700,7 @@ int main(int argc, char *argv[])
                     printf("[!] Section changes detected! Waiting 3s for VMProtect init...\n");
                 }
 
-                /* Trigger 1: VMProtect section decryption (existing behavior) */
+                                                                                 
                 if (first_change_tick > 0 && (ticks - first_change_tick) * POLL_INTERVAL_MS >= 3000) {
                     if (hTargetThread) SuspendThread(hTargetThread);
                     printf("[!] VMProtect init complete. Process SUSPENDED.\n");
@@ -3739,7 +3735,7 @@ int main(int argc, char *argv[])
                     TerminateProcess(hTargetProc, 0);
                 }
 
-                /* Trigger 2: Harvest region threshold or behavioral */
+                                                                       
                 if (harvest_trigger && !dump_done) {
                     printf("[!] HARVEST TRIGGER: %s at %.1fs\n",
                            g_harvest.new_this_cycle >= HARVEST_REGION_THRESHOLD
@@ -3764,7 +3760,7 @@ int main(int argc, char *argv[])
                     TerminateProcess(hTargetProc, 0);
                 }
 
-                /* Trigger 3: Process exited */
+                                               
                 if (!alive && !dump_done) {
                     printf("[!] Process exited (code %u) at %.1fs\n", (unsigned)ec,
                            (float)(ticks * POLL_INTERVAL_MS) / 1000.0f);
@@ -3796,7 +3792,7 @@ int main(int argc, char *argv[])
                 TerminateProcess(hTargetProc, 0);
             }
 
-            /* Write harvest report */
+                                      
             if (g_harvest_enabled)
                 write_harvest_report(ticks * POLL_INTERVAL_MS);
 
@@ -3804,7 +3800,7 @@ int main(int argc, char *argv[])
             if (hTargetThread) CloseHandle(hTargetThread);
 
         } else {
-            /* === ORIGINAL DIRECT MODE (fallback) === */
+                                                         
             char cmdline[MAX_PATH * 2];
             if (g_is_dll) {
                 snprintf(cmdline, sizeof(cmdline),
@@ -3968,7 +3964,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            /* Memory Harvester: initialize and take baseline snapshot */
+                                                                         
             if (g_harvest_enabled) {
                 harvest_init();
                 detect_pesieve_path();
@@ -3991,7 +3987,7 @@ int main(int argc, char *argv[])
                 int alive = (GetExitCodeProcess(hTargetProc, &ec) && ec == STILL_ACTIVE);
                 int changed = check_changes(hTargetProc, g_image_base);
 
-                /* Harvest: periodic region snapshot */
+                                                       
                 int harvest_trigger = 0;
                 if (g_harvest_enabled && (ticks % HARVEST_SNAP_INTERVAL == 0) && alive) {
                     take_region_snapshot(hTargetProc, g_image_base, g_size_of_image);
@@ -4000,7 +3996,7 @@ int main(int argc, char *argv[])
                         harvest_trigger = 1;
                 }
 
-                /* Harvest: periodic behavioral check */
+                                                        
                 if (g_harvest_enabled && (ticks % HARVEST_BEHAV_INTERVAL == 0) && alive) {
                     check_behavioral_trigger();
                     if (g_harvest.behavioral_trigger && g_harvest.current.count > 0)
@@ -4012,7 +4008,7 @@ int main(int argc, char *argv[])
                     printf("[!] Section changes detected! Waiting 3s for VMProtect init...\n");
                 }
 
-                /* Trigger 1: VMProtect section decryption (existing behavior) */
+                                                                                 
                 if (first_change_tick > 0 && (ticks - first_change_tick) * POLL_INTERVAL_MS >= 3000) {
                     if (hTargetThread) SuspendThread(hTargetThread);
                     printf("[!] VMProtect init complete. Process SUSPENDED.\n");
@@ -4039,7 +4035,7 @@ int main(int argc, char *argv[])
                     TerminateProcess(hTargetProc, 0);
                 }
 
-                /* Trigger 2: Harvest region threshold or behavioral */
+                                                                       
                 if (harvest_trigger && !dump_done) {
                     printf("[!] HARVEST TRIGGER: %s at %.1fs\n",
                            g_harvest.new_this_cycle >= HARVEST_REGION_THRESHOLD
@@ -4064,7 +4060,7 @@ int main(int argc, char *argv[])
                     TerminateProcess(hTargetProc, 0);
                 }
 
-                /* Trigger 3: Process exited */
+                                               
                 if (!alive && !dump_done) {
                     printf("[!] Process exited (code %u) at %.1fs\n", (unsigned)ec,
                            (float)(ticks * POLL_INTERVAL_MS) / 1000.0f);
@@ -4096,7 +4092,7 @@ int main(int argc, char *argv[])
                 TerminateProcess(hTargetProc, 0);
             }
 
-            /* Write harvest report */
+                                      
             if (g_harvest_enabled)
                 write_harvest_report(ticks * POLL_INTERVAL_MS);
 
@@ -4128,7 +4124,7 @@ int main(int argc, char *argv[])
     printf("    pesieve_out/          PE-sieve scan results\n");
     printf("=======================================================\n");
 
-    /* --- Write repair_summary.json --- */
+                                           
     {
         char sum_path[MAX_PATH];
         snprintf(sum_path, sizeof(sum_path), "%s\\repair_summary.json", g_output_dir);
