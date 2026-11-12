@@ -49,10 +49,6 @@ static int read_original_imports(const char *pe_path)
         return 0;
     }
 
-    DWORD img_base = *(DWORD*)(pe + 24 + 24);
-    if (machine == 0x8664)
-        img_base = (DWORD)*(DWORD64*)(pe + 24 + 24);
-
     int ptr_size = (machine == 0x8664) ? 8 : 4;
 
     g_orig_import_count = 0;
@@ -99,7 +95,8 @@ static int read_original_imports(const char *pe_path)
 
             OrigImport *oi = &g_orig_imports[g_orig_import_count];
             memset(oi, 0, sizeof(*oi));
-            strncpy(oi->dll, dll, sizeof(oi->dll) - 1);
+            memcpy(oi->dll, dll, sizeof(oi->dll) - 1);
+            oi->dll[sizeof(oi->dll) - 1] = '\0';
 
             if (is_ord) {
                 sprintf(oi->func, "#%lu", (unsigned long)(name_field & 0xFFFF));
@@ -165,6 +162,8 @@ static DWORD64 vid_resolve_via_catalog(const char *dll, const char *func)
     return 0;
 }
 
+static void vid_build_fresh_import_dir(const char *dump_path, const char *target_name);
+
 void rebuild_imports_vid(HANDLE hProc, DWORD64 base, const char *target_name)
 {
     printf("\n[*] VID-style IAT rebuild: 5-step simulated GetProcAddress...\n");
@@ -193,6 +192,11 @@ void rebuild_imports_vid(HANDLE hProc, DWORD64 base, const char *target_name)
         return;
     }
     DWORD pe_off = *(DWORD*)(hdr + 0x3C);
+    if (pe_off == 0 || pe_off + 264 > sizeof(hdr) ||
+        hdr[pe_off] != 'P' || hdr[pe_off + 1] != 'E') {
+        printf("[-] VID: target PE header offset invalid (0x%lX)\n", (unsigned long)pe_off);
+        return;
+    }
     BYTE *pe = hdr + pe_off;
     WORD machine = *(WORD*)(pe + 4);
     int dd_base = (machine == 0x8664) ? (24 + 112) : (24 + 96);
@@ -266,7 +270,7 @@ void rebuild_imports_vid(HANDLE hProc, DWORD64 base, const char *target_name)
             DWORD old_prot = 0;
             if (VirtualProtectEx(hProc, (LPVOID)(ULONG_PTR)slot_addr, ptr_size,
                                  PAGE_READWRITE, &old_prot)) {
-                if (WriteProcessMemory(hProc, (LPCVOID)(ULONG_PTR)slot_addr,
+                if (WriteProcessMemory(hProc, (LPVOID)(ULONG_PTR)slot_addr,
                                        &resolved, ptr_size, &nr)) {
                     stubs_replaced++;
                     FlushInstructionCache(hProc, (LPCVOID)(ULONG_PTR)slot_addr, ptr_size);
@@ -291,15 +295,210 @@ void rebuild_imports_vid(HANDLE hProc, DWORD64 base, const char *target_name)
            stubs_total, stubs_replaced, already_real);
 
     printf("[*] VID step 4: rebuilding fresh import directory in dump...\n");
-    (void)target_name;
+    char vid_dump_path[MAX_PATH];
+    const char *vbn = get_basename(target_name);
+    if (!vbn) vbn = target_name;
+    snprintf(vid_dump_path, sizeof(vid_dump_path), "%s\\%s_dumped.bin",
+             g_output_dir, vbn);
+    vid_build_fresh_import_dir(vid_dump_path, target_name);
 }
+static void wr_imp_word(BYTE *p, DWORD v)
+{
+    p[0] = (BYTE)(v & 0xFF);
+    p[1] = (BYTE)((v >> 8) & 0xFF);
+}
+
+static void wr_imp_dword(BYTE *p, DWORD v)
+{
+    for (int i = 0; i < 4; i++) p[i] = (BYTE)((v >> (8 * i)) & 0xFF);
+}
+
+static void wr_imp_qword(BYTE *p, DWORD64 v)
+{
+    for (int i = 0; i < 8; i++) p[i] = (BYTE)((v >> (8 * i)) & 0xFF);
+}
+
+static DWORD vid_align_up(DWORD v, DWORD a)
+{
+    return (a == 0) ? v : ((v + a - 1) & ~(a - 1));
+}
+
+static void vid_build_fresh_import_dir(const char *dump_path, const char *target_name)
+{
+    (void)target_name;
+    FILE *f = fopen(dump_path, "r+b");
+    if (!f) {
+        printf("[-] VID step 4: cannot open dump %s\n", dump_path);
+        return;
+    }
+
+    BYTE hdr[4096];
+    if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) { fclose(f); return; }
+    if (hdr[0] != 'M' || hdr[1] != 'Z') { fclose(f); return; }
+    DWORD pe_off = *(DWORD*)(hdr + 0x3C);
+    if (pe_off == 0 || pe_off + 264 > sizeof(hdr) ||
+        hdr[pe_off] != 'P' || hdr[pe_off + 1] != 'E') {
+        printf("[-] VID step 4: dump PE header invalid\n");
+        fclose(f);
+        return;
+    }
+    BYTE *pe = hdr + pe_off;
+    WORD machine = *(WORD*)(pe + 4);
+    int ptr_size = (machine == 0x8664) ? 8 : 4;
+    int dd_base = (machine == 0x8664) ? (24 + 112) : (24 + 96);
+    DWORD sect_align = *(DWORD*)(pe + 24 + 32);
+    DWORD file_align = *(DWORD*)(pe + 24 + 36);
+    DWORD size_of_image = *(DWORD*)(pe + 24 + 56);
+    WORD ns = *(WORD*)(pe + 6);
+    if (sect_align == 0) sect_align = 0x1000;
+    if (file_align == 0) file_align = 0x200;
+    if (ns >= 16) {
+        printf("[!] VID step 4: no free section header slot (ns=%u), skipped\n", ns);
+        fclose(f);
+        return;
+    }
+
+    const char *dlls[256];
+    char dllbuf[256][64];
+    int ndll = 0;
+    int per_dll[256];
+    for (int i = 0; i < 256; i++) per_dll[i] = 0;
+    for (int i = 0; i < g_vid_fix_count && ndll < 256; i++) {
+        int found = -1;
+        for (int k = 0; k < ndll; k++)
+            if (_stricmp_null_safe(dllbuf[k], g_vid_fixes[i].module) == 0) { found = k; break; }
+        if (found < 0) {
+            strncpy(dllbuf[ndll], g_vid_fixes[i].module, 63);
+            dllbuf[ndll][63] = 0;
+            found = ndll++;
+        }
+        per_dll[found]++;
+        (void)dlls;
+    }
+    if (ndll == 0) {
+        printf("[*] VID step 4: no resolved imports recorded, fresh import directory skipped\n");
+        fclose(f);
+        return;
+    }
+
+    DWORD idt_len = (DWORD)(ndll + 1) * 20;
+    DWORD int_len = 0, name_len = 0;
+    for (int k = 0; k < ndll; k++) {
+        int_len += (DWORD)(per_dll[k] + 1) * ptr_size;
+        name_len += (DWORD)strlen(dllbuf[k]) + 6;
+        name_len += 2;
+        for (int i = 0; i < g_vid_fix_count; i++) {
+            if (_stricmp_null_safe(g_vid_fixes[i].module, dllbuf[k]) == 0)
+                name_len += (DWORD)strlen(g_vid_fixes[i].function) + 4;
+        }
+    }
+    DWORD ft_len = int_len;
+    DWORD blob_len = idt_len + int_len + ft_len + name_len + 64;
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    DWORD vid_rva = vid_align_up(size_of_image, sect_align);
+    DWORD vid_raw = vid_align_up((DWORD)fsize, file_align);
+    DWORD vid_vlen = vid_align_up(blob_len, sect_align);
+
+    BYTE *blob = (BYTE*)calloc(1, blob_len);
+    if (!blob) { fclose(f); return; }
+
+    DWORD name_off = idt_len;
+    DWORD names_end = idt_len;
+    for (int k = 0; k < ndll; k++) {
+        names_end += (DWORD)strlen(dllbuf[k]) + 1;
+    }
+    DWORD ibn_off = names_end;
+    for (int k = 0; k < ndll; k++) ibn_off += (DWORD)strlen(dllbuf[k]) + 1;
+    DWORD int_arrays = ibn_off;
+    for (int i = 0; i < g_vid_fix_count; i++)
+        int_arrays += (DWORD)strlen(g_vid_fixes[i].function) + 1;
+    int_arrays = vid_align_up(int_arrays, 16);
+
+    DWORD cursor_int = int_arrays;
+    DWORD cursor_ft = int_arrays + int_len;
+    BYTE *idt = blob;
+    DWORD e = 0;
+    for (int k = 0; k < ndll; k++) {
+        DWORD name_rva = vid_rva + name_off;
+        wr_imp_dword(idt + e * 20 + 12, name_rva);
+        DWORD oft_rva = vid_rva + cursor_int;
+        wr_imp_dword(idt + e * 20 + 0, oft_rva);
+        DWORD ft_rva = vid_rva + cursor_ft;
+        wr_imp_dword(idt + e * 20 + 16, ft_rva);
+
+        DWORD ii = cursor_int;
+        DWORD ff = cursor_ft;
+        for (int i = 0; i < g_vid_fix_count; i++) {
+            if (_stricmp_null_safe(g_vid_fixes[i].module, dllbuf[k]) != 0) continue;
+            BYTE *ibn = blob + ibn_off;
+            wr_imp_word(ibn, 0);
+            strcpy((char*)ibn + 2, g_vid_fixes[i].function);
+            DWORD ibn_rva = vid_rva + ibn_off;
+            DWORD ord_flag = (machine == 0x8664) ? 0x8000000000000000ULL : 0x80000000UL;
+            (void)ord_flag;
+            if (ptr_size == 8) {
+                wr_imp_qword(blob + ii, ibn_rva);
+                wr_imp_qword(blob + ff, g_vid_fixes[i].resolved_addr);
+                ii += 8;
+                ff += 8;
+            } else {
+                wr_imp_dword(blob + ii, ibn_rva);
+                wr_imp_dword(blob + ff, (DWORD)g_vid_fixes[i].resolved_addr);
+                ii += 4;
+                ff += 4;
+            }
+            ibn_off += (DWORD)strlen(g_vid_fixes[i].function) + 3;
+        }
+        if (ptr_size == 8) {
+            wr_imp_qword(blob + ii, 0);
+            wr_imp_qword(blob + ff, 0);
+        } else {
+            wr_imp_dword(blob + ii, 0);
+            wr_imp_dword(blob + ff, 0);
+        }
+        cursor_int += (DWORD)(per_dll[k] + 1) * ptr_size;
+        cursor_ft += (DWORD)(per_dll[k] + 1) * ptr_size;
+        e++;
+    }
+    for (int k = 0; k < ndll; k++) {
+        strcpy((char*)blob + name_off, dllbuf[k]);
+        name_off += (DWORD)strlen(dllbuf[k]) + 1;
+    }
+
+    fseek(f, (long)vid_raw, SEEK_SET);
+    fwrite(blob, 1, blob_len, f);
+
+    *(DWORD*)(pe + dd_base + 0) = vid_rva;
+    *(DWORD*)(pe + dd_base + 4) = idt_len;
+    *(DWORD*)(pe + 24 + 56) = vid_rva + vid_vlen;
+
+    BYTE *sh = hdr + pe_off + 24 + (machine == 0x8664 ? 240 : 224) + (DWORD)ns * 40;
+    memset(sh, 0, 40);
+    memcpy(sh, ".vid", 4);
+    *(DWORD*)(sh + 8)  = blob_len;
+    *(DWORD*)(sh + 12) = vid_rva;
+    *(DWORD*)(sh + 16) = blob_len;
+    *(DWORD*)(sh + 20) = vid_raw;
+    *(DWORD*)(sh + 36) = 0xC0000040;
+    *(WORD*)(pe + 6) = (WORD)(ns + 1);
+
+    fseek(f, 0, SEEK_SET);
+    fwrite(hdr, 1, sizeof(hdr), f);
+    fclose(f);
+    free(blob);
+
+    printf("[+] VID step 4: fresh import directory built in dump: %d DLL(s), %d function(s),\n"
+           "    section .vid RVA=0x%08lX raw=0x%08lX len=0x%lX, DD1 -> 0x%08lX/0x%lX, SizeOfImage=0x%lX\n",
+           ndll, g_vid_fix_count, (unsigned long)vid_rva, (unsigned long)vid_raw, (unsigned long)blob_len, (unsigned long)vid_rva, (unsigned long)idt_len,
+           (unsigned long)(vid_rva + vid_vlen));
+}
+
 
 void reconstruct_iat(HANDLE hProc, DWORD64 base)
 {
     printf("\n[*] Reconstructing IAT from loaded modules...\n");
-
-    HMODULE mods[512];
-    DWORD cb_needed = 0;
 
     DWORD pid = GetProcessId(hProc);
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
@@ -425,7 +624,7 @@ int rewrite_resolved_imports_report(void)
     FILE *report = fopen(report_path, "w");
     if (!report) return -1;
 
-    fprintf(report, "=== VMProtect Dumper v4.0 - Resolved Imports ===\n");
+    fprintf(report, "=== VMProtect Dumper v" VMPD_VERSION " - Resolved Imports ===\n");
     fprintf(report, "=== Scanned from loaded module export tables ===\n\n");
 
     int written = 0;
@@ -445,9 +644,9 @@ int rewrite_resolved_imports_report(void)
         }
 
         if (slot_rva != 0) {
-            fprintf(report, "%s!%s = 0x%016llX  @ RVA=0x%08X\n",
+            fprintf(report, "%s!%s = 0x%016llX  @ RVA=0x%08lX\n",
                     e->module, e->function,
-                    (unsigned long long)e->resolved_addr, slot_rva);
+                    (unsigned long long)e->resolved_addr, (unsigned long)slot_rva);
         } else {
             fprintf(report, "%s!%s = 0x%016llX\n",
                     e->module, e->function,
@@ -460,9 +659,9 @@ int rewrite_resolved_imports_report(void)
     for (int i = 0; i < g_resolved_iat_count; i++) {
         ResolvedIATEntry *re = &g_resolved_iat[i];
         if (re->import_idx >= 0 || re->module[0] == '\0') continue;
-        fprintf(report, "%s!%s = 0x%016llX  @ RVA=0x%08X  [triton lazy]\n",
+        fprintf(report, "%s!%s = 0x%016llX  @ RVA=0x%08lX  [smt lazy]\n",
                 re->module, re->function,
-                (unsigned long long)re->resolved_addr, re->iat_rva);
+                (unsigned long long)re->resolved_addr, (unsigned long)re->iat_rva);
         lazy++;
     }
 
@@ -470,7 +669,7 @@ int rewrite_resolved_imports_report(void)
     fprintf(report, "Total resolved exports: %d\n", written);
     fprintf(report, "IAT slots mapped: %d\n", g_iat_slot_count);
     if (lazy > 0)
-        fprintf(report, "Triton lazy-resolved: %d\n", lazy);
+        fprintf(report, "SMT lazy-resolved: %d\n", lazy);
     fclose(report);
     return written;
 }
@@ -506,11 +705,9 @@ static DWORD64 follow_thunk_chain(HANDLE hProc, DWORD64 addr, DWORD64 img_base, 
             return 0;
 
         if (code[0] == 0xFF && code[1] == 0x25) {
-            DWORD target_ptr;
 #ifdef _WIN64
 
             DWORD disp = *(DWORD*)(code + 2);
-            target_ptr = 0;
             DWORD64 ptr_addr = addr + 6 + (INT32)disp;
             DWORD64 final;
             if (!ReadProcessMemory(hProc, (LPCVOID)ptr_addr, &final, 8, &nr))
@@ -562,6 +759,11 @@ void resolve_iat_thunks(HANDLE hProc, DWORD64 base)
         return;
 
     DWORD pe_off = *(DWORD*)(hdr + 0x3C);
+    if (pe_off == 0 || pe_off + 264 > sizeof(hdr) ||
+        hdr[pe_off] != 'P' || hdr[pe_off + 1] != 'E') {
+        printf("[-] IAT header offset invalid (0x%lX)\n", (unsigned long)pe_off);
+        return;
+    }
     BYTE *pe = hdr + pe_off;
     WORD machine = *(WORD*)(pe + 4);
 
@@ -576,7 +778,11 @@ void resolve_iat_thunks(HANDLE hProc, DWORD64 base)
 
     int ptr_size = (machine == 0x8664) ? 8 : 4;
     int num_slots = (int)(iat_size / ptr_size);
-    if (num_slots > MAX_IAT_RESOLVED) num_slots = MAX_IAT_RESOLVED;
+    if (num_slots > MAX_IAT_RESOLVED) {
+        printf("[!] IAT has %d slots, resolving first %d (MAX_IAT_RESOLVED); "
+               "remaining slots stay untouched\n", num_slots, MAX_IAT_RESOLVED);
+        num_slots = MAX_IAT_RESOLVED;
+    }
 
     DWORD img_size = g_size_of_image;
     if (img_size == 0) img_size = 0x1000000;

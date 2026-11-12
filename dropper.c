@@ -1,4 +1,5 @@
 #include "vmpd.h"
+#include <math.h>
 
 static FSEntry  g_fs_snapshot[MAX_SNAPSHOT_FILES];
 
@@ -371,9 +372,21 @@ int attach_and_assess(HANDLE hProc, HANDLE hThread, DWORD64 image_base)
         SectionInfo *si = &g_sections[i];
         if (si->vsize == 0 || si->vsize < 0x1000) continue;
         int nz = 0;
-        for (int j = 0; j < FINGERPRINT_SIZE; j++)
+        DWORD hist[256];
+        memset(hist, 0, sizeof(hist));
+        for (int j = 0; j < FINGERPRINT_SIZE; j++) {
             if (si->fingerprint[j] != 0) nz++;
-        if (nz > (int)(FINGERPRINT_SIZE * 0.8))
+            hist[si->fingerprint[j]]++;
+        }
+        double H = 0.0;
+        for (int k = 0; k < 256; k++) {
+            if (!hist[k]) continue;
+            double p = (double)hist[k] / (double)FINGERPRINT_SIZE;
+            H -= p * log(p) / log(2.0);
+        }
+        int dense = nz > (int)(FINGERPRINT_SIZE * 0.8);
+        int plausible_code = (H >= 3.0 && H <= 7.2);
+        if (dense && plausible_code)
             decrypted_count++;
     }
 
@@ -408,8 +421,8 @@ int wait_for_named_process(const char *proc_name, int timeout_sec, TargetInfo *f
             do {
                 if (_stricmp(pe.szExeFile, proc_name) == 0) {
                     CloseHandle(snap);
-                    printf("[+] Found '%s' (PID %u) at %.1fs\n",
-                           proc_name, pe.th32ProcessID,
+                    printf("[+] Found '%s' (PID %lu) at %.1fs\n",
+                           proc_name, (unsigned long)pe.th32ProcessID,
                            (float)(ticks * DROPPER_POLL_MS) / 1000.0f);
 
                     found->pid = pe.th32ProcessID;
@@ -449,15 +462,14 @@ int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *found)
     memset(&pi, 0, sizeof(pi));
 
     char cmdline[MAX_PATH * 2];
-    strncpy(cmdline, target_exe, sizeof(cmdline) - 1);
-    cmdline[sizeof(cmdline) - 1] = '\0';
+    snprintf(cmdline, sizeof(cmdline), "\"%s\"", target_exe);
 
     printf("[*] Launching dropper (normal, not suspended)...\n");
     if (!CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
         printf("[-] CreateProcess failed for dropper (error %u)\n", (unsigned)GetLastError());
         return 0;
     }
-    printf("[+] Dropper PID=%u\n", pi.dwProcessId);
+    printf("[+] Dropper PID=%lu\n", (unsigned long)pi.dwProcessId);
     CloseHandle(pi.hThread);
 
     int ticks = 0;
@@ -495,7 +507,7 @@ int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *found)
                     if (get_process_image_path(new_pids[p], img_path, MAX_PATH)) {
                         if (_stricmp(img_path, new_files[i]) == 0 ||
                             _stricmp(get_basename(img_path), get_basename(new_files[i])) == 0) {
-                            printf("[+] MATCHED PROCESS: PID %u (%s)\n", new_pids[p], img_path);
+                            printf("[+] MATCHED PROCESS: PID %lu (%s)\n", (unsigned long)new_pids[p], img_path);
                             found->pid = new_pids[p];
                             found->hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, new_pids[p]);
                             found->hThread = get_main_thread_handle(new_pids[p]);
@@ -524,7 +536,7 @@ int dropper_mode(const char *target_exe, int timeout_sec, TargetInfo *found)
             if (file_attr != INVALID_FILE_ATTRIBUTES) {
                 PackerCheckResult pr;
                 if (check_file_for_packer(img_path, &pr)) {
-                    printf("[+] PACKED PROCESS: PID %u (%s) - %s\n",
+                    printf("[+] PACKED PROCESS: PID %lu (%s) - %s\n",
                            new_pids[p], img_path, pr.details);
                     found->pid = new_pids[p];
                     found->hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, new_pids[p]);
@@ -558,7 +570,7 @@ void write_dropper_info(const char *original, const char *payload, DWORD pid,
     fprintf(f, "Dropper Mode Activated\n");
     fprintf(f, "Original Sample: %s\n", original);
     fprintf(f, "Packed Payload: %s\n", payload);
-    fprintf(f, "Payload PID: %u\n", pid);
+    fprintf(f, "Payload PID: %lu\n", (unsigned long)pid);
     fprintf(f, "Discovery Method: %s\n", method);
     fprintf(f, "Discovery Time: %.1f seconds\n", discovery_time);
     fclose(f);

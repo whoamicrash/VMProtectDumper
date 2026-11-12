@@ -7,6 +7,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define VMPD_VERSION "6.0"
+
+int _stricmp_null_safe(const char *a, const char *b);
+
 #ifdef _WIN64
 #define ADDR_FMT    "0x%llX"
 #define ADDR_FMTW   "0x%016llX"
@@ -73,20 +77,20 @@ typedef struct {
 #define MAX_ORIG_IMPORTS 16384
 #define MAX_VID_FIXES 8192
 #define MAX_IAT_RESOLVED 512
-#define TRI_MAX_INSN_LEN 15
-#define TRI_RUN_RESOLVED   1
-#define TRI_RUN_RET        2
-#define TRI_RUN_CAP        3
-#define TRI_RUN_DECODE     4
-#define TRI_RUN_DIV        5
-#define TRI_RUN_HOOK       6
-#define TRI_RUN_EXPR_OOM   7
+#define SMT_MAX_INSN_LEN 15
+#define SMT_RUN_RESOLVED   1
+#define SMT_RUN_RET        2
+#define SMT_RUN_CAP        3
+#define SMT_RUN_DECODE     4
+#define SMT_RUN_DIV        5
+#define SMT_RUN_HOOK       6
+#define SMT_RUN_EXPR_OOM   7
 #define SVC_TEMP_NAME "VmpDumpTempSvc"
 #define ZIP_LOCAL_SIG       0x04034b50
 #define ZIP_CENTRAL_SIG     0x02014b50
 #define ZIP_END_SIG         0x06054b50
 #define ZIP_ENC_HDR_SIZE    12
-#define ZIP_MAX_FILES       128
+#define ZIP_MAX_FILES       4096
 #define MAX_WATCH_DIRS      16
 #define MAX_SNAPSHOT_FILES   1024
 #define MAX_NEW_FILES        64
@@ -208,6 +212,7 @@ typedef struct {
     char  name[MAX_PATH]; WORD name_len;
     DWORD crc, comp_size, raw_size, local_offset;
     WORD  dos_date, dos_time;
+    BYTE  skip;
 } ZipFileEntry;
 
 
@@ -237,16 +242,16 @@ typedef struct {
 extern DWORD64 g_image_base;
 extern DWORD g_size_of_image;
 extern char g_output_dir[MAX_PATH];
-extern int g_no_triton;
+extern int g_no_smt;
 extern DWORD g_oep_thread_rva;
 extern DWORD g_oep_crt_rva;
 extern int g_harvest_enabled;
-extern long g_triton_resolved;
-extern long g_triton_unresolved;
-extern long g_triton_already_real;
-extern long g_triton_collatz;
-extern long g_triton_bombs;
-extern unsigned long long g_triton_instr;
+extern long g_smt_resolved;
+extern long g_smt_unresolved;
+extern long g_smt_already_real;
+extern long g_smt_collatz;
+extern long g_smt_bombs;
+extern unsigned long long g_smt_instr;
 extern char g_zip_path[MAX_PATH];
 extern char g_zip_password[256];
 extern SectionInfo g_sections[MAX_SECTIONS];
@@ -286,7 +291,7 @@ void scan_for_iat_entries(HANDLE hProc, DWORD64 base);
 void resolve_iat_thunks(HANDLE hProc, DWORD64 base);
 void patch_dumped_iat(const char *target_name);
 void scan_iat_slots(HANDLE hProc, DWORD64 base);
-void triton_run(const char *target_name);
+void smt_run(const char *target_name);
 void scan_process_strings(HANDLE hProc);
 void capture_dropped_files(const char *target_dir);
 void kill_monitor_processes(int kill_vmtools);

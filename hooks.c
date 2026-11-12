@@ -14,7 +14,6 @@ static char  g_target_image_name[128] = "";
 
 static int lde64_len(const BYTE *p, int max_len);
 
-static int lde32_len(const BYTE *p, int max_len);
 
 static void launch_remote_patch_stub(HANDLE hProc, DWORD64 cave_remote,
                                      DWORD64 gpa, DWORD64 lla, DWORD64 llw,
@@ -61,24 +60,6 @@ static int lde_modrm_extra64(BYTE modrm)
     if (mod == 1) len += 1;
     else if (mod == 2) len += 4;
     else if (mod == 0 && rm == 5) len += 4;
-    return len;
-}
-
-static int lde_modrm_extra32(BYTE modrm, int addr16)
-{
-    BYTE mod = (BYTE)(modrm >> 6);
-    BYTE rm  = (BYTE)(modrm & 7);
-    int len = 0;
-    if (addr16) {
-        if (mod == 0 && rm == 6) len += 2;
-        else if (mod == 1) len += 1;
-        else if (mod == 2) len += 2;
-    } else {
-        if (mod != 3 && rm == 4) len += 1;
-        if (mod == 1) len += 1;
-        else if (mod == 2) len += 4;
-        else if (mod == 0 && rm == 5) len += 4;
-    }
     return len;
 }
 
@@ -240,115 +221,6 @@ static int lde64_len(const BYTE *p, int max_len)
         if (in_range) {
             if (n + 1 >= max_len) return -1;
             return n + 2 + lde_sib_extra64(p[n + 1], p[n + 2]);
-        }
-    }
-
-    return -1;
-}
-
-static int lde32_len(const BYTE *p, int max_len)
-{
-    int n = 0;
-    int opsz16 = 0;
-    int addr16 = 0;
-
-    for (;;) {
-        BYTE b;
-        if (n >= max_len) return -1;
-        b = p[n];
-        if (b == 0x66) { opsz16 = 1; n++; continue; }
-        if (b == 0x67) { addr16 = 1; n++; continue; }
-        if (b == 0x2E || b == 0x3E || b == 0x26 || b == 0x36 ||
-            b == 0x64 || b == 0x65 || b == 0xF2 || b == 0xF3 || b == 0xF0) { n++; continue; }
-        break;
-    }
-    if (n >= max_len) return -1;
-
-    BYTE op = p[n];
-
-    switch (op) {
-    case 0xE8: case 0xE9:
-        return n + 1 + 4;
-    case 0xEB:
-        return n + 1 + 1;
-    case 0x68:
-        return n + 1 + (opsz16 ? 2 : 4);
-    case 0x6A:
-        return n + 1 + 1;
-    case 0xA8:
-        return n + 1 + 1;
-    case 0xA9:
-        return n + 1 + (opsz16 ? 2 : 4);
-    case 0xC2: case 0xCA:
-        return n + 1 + 2;
-    case 0xC8:
-        return n + 1 + 3;
-    case 0xCD:
-        return n + 1 + 1;
-    case 0xB0: case 0xB1: case 0xB2: case 0xB3:
-    case 0xB4: case 0xB5: case 0xB6: case 0xB7:
-        return n + 1 + 1;
-    case 0xB8: case 0xB9: case 0xBA: case 0xBB:
-    case 0xBC: case 0xBD: case 0xBE: case 0xBF:
-        return n + 1 + (opsz16 ? 2 : 4);
-    case 0x80: case 0xC0: case 0xC1: case 0xC6: case 0x6B: case 0x83:
-        if (n + 1 >= max_len) return -1;
-        return n + 1 + 1 + lde_modrm_extra32(p[n + 1], addr16);
-    case 0x81:
-        if (n + 1 >= max_len) return -1;
-        return n + 1 + (opsz16 ? 2 : 4) + lde_modrm_extra32(p[n + 1], addr16);
-    case 0x69:
-        if (n + 1 >= max_len) return -1;
-        return n + 1 + 4 + lde_modrm_extra32(p[n + 1], addr16);
-    case 0xC7:
-        if (n + 1 >= max_len) return -1;
-        return n + 1 + (opsz16 ? 2 : 4) + lde_modrm_extra32(p[n + 1], addr16);
-    default:
-        break;
-    }
-
-    {
-        static const BYTE modrm_ranges[][2] = {
-            {0x00, 0x03}, {0x08, 0x0B}, {0x10, 0x13}, {0x18, 0x1B},
-            {0x20, 0x23}, {0x28, 0x2B}, {0x30, 0x33}, {0x38, 0x3B},
-            {0x62, 0x63}, {0x69, 0x6F}, {0x84, 0x8F}, {0xD0, 0xD3},
-            {0xD8, 0xDF}, {0xFE, 0xFF}
-        };
-        int in_range = 0;
-        for (int t = 0; t < (int)(sizeof(modrm_ranges) / sizeof(modrm_ranges[0])); t++) {
-            if (op >= modrm_ranges[t][0] && op <= modrm_ranges[t][1]) { in_range = 1; break; }
-        }
-        if (in_range) {
-            if (n + 1 >= max_len) return -1;
-            return n + 1 + lde_modrm_extra32(p[n + 1], addr16);
-        }
-        if (op >= 0x04 && op <= 0x05) return n + 1;
-        if (op >= 0x0C && op <= 0x0D) return n + 1;
-        if (op >= 0x14 && op <= 0x15) return n + 1;
-        if (op >= 0x1C && op <= 0x1D) return n + 1;
-        if (op >= 0x24 && op <= 0x25) return n + 1;
-        if (op >= 0x2C && op <= 0x2D) return n + 1;
-        if (op >= 0x34 && op <= 0x35) return n + 1;
-        if (op >= 0x3C && op <= 0x3D) return n + 1;
-        if (op == 0xA0 || op == 0xA1 || op == 0xA2 || op == 0xA3) {
-            return n + 1 + (addr16 ? 2 : 4);
-        }
-        if (op >= 0x70 && op <= 0x7F) return n + 1 + 1;
-        if (op >= 0x40 && op <= 0x5F) return n + 1;
-        if (op >= 0x90 && op <= 0x9F) return n + 1;
-        if (op >= 0xA4 && op <= 0xAF) return n + 1;
-        if (op >= 0xF8 && op <= 0xFD) return n + 1;
-        if (op == 0xF6) {
-            if (n + 1 >= max_len) return -1;
-            BYTE reg = (BYTE)((p[n + 1] >> 3) & 7);
-            return n + 1 + 1 + lde_modrm_extra32(p[n + 1], addr16) +
-                   ((reg == 0 || reg == 1) ? 1 : 0);
-        }
-        if (op == 0xF7) {
-            if (n + 1 >= max_len) return -1;
-            BYTE reg = (BYTE)((p[n + 1] >> 3) & 7);
-            return n + 1 + (opsz16 ? 2 : 4) + lde_modrm_extra32(p[n + 1], addr16) +
-                   ((reg == 0 || reg == 1) ? (opsz16 ? 2 : 4) : 0);
         }
     }
 
@@ -536,33 +408,12 @@ static void cb_put8(CodeBuf *c, BYTE v)
     if (c->len < c->cap) c->buf[c->len++] = v;
 }
 
-static void cb_put16(CodeBuf *c, WORD v)
-{
-    cb_put8(c, (BYTE)(v & 0xFF));
-    cb_put8(c, (BYTE)(v >> 8));
-}
-
 static void cb_put32(CodeBuf *c, DWORD v)
 {
     cb_put8(c, (BYTE)(v & 0xFF));
     cb_put8(c, (BYTE)((v >> 8) & 0xFF));
     cb_put8(c, (BYTE)((v >> 16) & 0xFF));
     cb_put8(c, (BYTE)((v >> 24) & 0xFF));
-}
-
-static void cb_put64(CodeBuf *c, DWORD64 v)
-{
-    for (int i = 0; i < 8; i++) cb_put8(c, (BYTE)((v >> (8 * i)) & 0xFF));
-}
-
-static void cb_patch32(CodeBuf *c, int at, DWORD v)
-{
-    if (at + 4 <= c->cap) {
-        c->buf[at]     = (BYTE)(v & 0xFF);
-        c->buf[at + 1] = (BYTE)((v >> 8) & 0xFF);
-        c->buf[at + 2] = (BYTE)((v >> 16) & 0xFF);
-        c->buf[at + 3] = (BYTE)((v >> 24) & 0xFF);
-    }
 }
 
 static int hook_build_trampoline(HANDLE hProc, DWORD64 orig_addr, DWORD64 tramp_addr,
@@ -575,7 +426,6 @@ static int hook_build_trampoline(HANDLE hProc, DWORD64 orig_addr, DWORD64 tramp_
         return 0;
 
     int total = 0;
-    int rip_refs[8];
     int rip_ref_at[8];
     int n_rip = 0;
 
@@ -590,7 +440,6 @@ static int hook_build_trampoline(HANDLE hProc, DWORD64 orig_addr, DWORD64 tramp_
         }
         BYTE op = orig[total];
         int is_riprel = 0;
-        int rip_disp_at = -1;
 
         if (op == 0x0F && total + 1 < 16) {
             BYTE op2 = orig[total + 1];
@@ -654,7 +503,6 @@ static int hook_build_trampoline(HANDLE hProc, DWORD64 orig_addr, DWORD64 tramp_
                 }
                 disp_off = plen + 1;
             }
-            rip_refs[n_rip] = op;
             rip_ref_at[n_rip] = disp_off;
             n_rip++;
         }
@@ -744,12 +592,22 @@ void install_gpa_hook(HANDLE hProc)
 #ifdef _WIN64
     if (g_hook_cave != 0) return;
 
+    if (g_machine == IMAGE_FILE_MACHINE_I386) {
+        static int wow64_said = 0;
+        if (!wow64_said) {
+            wow64_said = 1;
+            printf("[*] target is 32-bit (WOW64): x64 inline hooks not applicable,\n"
+                   "    hooking skipped. Read-based IAT rebuild + SMT engine stay active.\n");
+        }
+        return;
+    }
+
     if (is_wine_host()) {
         static int wine_said = 0;
         if (!wine_said) {
             wine_said = 1;
             printf("[*] wine host: inline hooks disabled entirely (no cross-process\n"
-                   "    writes, no cave allocation). Read-based IAT rebuild + Triton\n"
+                   "    writes, no cave allocation). Read-based IAT rebuild + SMT engine\n"
                    "    stay active.\n");
         }
         return;
@@ -976,7 +834,6 @@ void install_gpa_hook(HANDLE hProc)
     g_hook_gpa_addr = gpa;
     g_hook_lla_addr = lla;
     g_hook_llw_addr = llw;
-    free_saved_prologues: ;
 #else
     printf("[*] GPA hook: x86 target, inline hooks skipped (order-based IAT rebuild will be used)\n");
 #endif
@@ -1032,7 +889,7 @@ int patch_iat_slots_for_hooks(HANDLE hProc)
             }
 
             if (dbg_now)
-                printf("[iatdbg] mod %ls imp_rva=0x%X imp_sz=0x%X\n", me.szModule, imp_rva, imp_sz);
+                printf("[iatdbg] mod %ls imp_rva=0x%lX imp_sz=0x%lX\n", me.szModule, (unsigned long)imp_rva, (unsigned long)imp_sz);
 
             for (DWORD d = 0; d + 20 <= imp_sz; d += 20) {
                 DWORD oft = *(DWORD*)(ib + d);
@@ -1315,7 +1172,8 @@ void poll_gpa_log(HANDLE hProc)
                     tmp[sizeof(tmp) - 1] = '\0';
                     tmp[255] = '\0';
                     if (tmp[0] != '\0') {
-                        strncpy(func_name, tmp, sizeof(func_name) - 1);
+                        memcpy(func_name, tmp, sizeof(func_name) - 1);
+                        func_name[sizeof(func_name) - 1] = '\0';
                         have_name = 1;
                     }
                 }
@@ -1327,7 +1185,8 @@ void poll_gpa_log(HANDLE hProc)
                                       tmp, sizeof(tmp) - 1, &nread) && nread > 0) {
                     tmp[sizeof(tmp) - 1] = '\0';
                     if (tmp[0] != '\0') {
-                        strncpy(func_name, tmp, sizeof(func_name) - 1);
+                        memcpy(func_name, tmp, sizeof(func_name) - 1);
+                        func_name[sizeof(func_name) - 1] = '\0';
                         have_name = 1;
                     }
                 }
@@ -1340,7 +1199,8 @@ void poll_gpa_log(HANDLE hProc)
                     char tmp[256] = {0};
                     WideCharToMultiByte(CP_ACP, 0, wtmp, -1, tmp, sizeof(tmp), NULL, NULL);
                     if (tmp[0] != '\0') {
-                        strncpy(func_name, tmp, sizeof(func_name) - 1);
+                        memcpy(func_name, tmp, sizeof(func_name) - 1);
+                        func_name[sizeof(func_name) - 1] = '\0';
                         have_name = 1;
                     }
                 }
@@ -1379,6 +1239,16 @@ void poll_gpa_log(HANDLE hProc)
     if (new_logged > 0)
         printf("[+] GPA hook log: +%d calls captured (total ring %lld)\n",
                new_logged, (long long)count);
+
+    if (count >= HOOK_RING_MAX) {
+        LONGLONG zero = 0;
+        SIZE_T wr = 0;
+        if (WriteProcessMemory(hProc, (LPVOID)(ULONG_PTR)(g_hook_cave + 8),
+                               &zero, sizeof(zero), &wr) && wr == sizeof(zero)) {
+            consumed = 0;
+            printf("[*] GPA hook ring: counter reset, oldest entries will be overwritten (circular)\n");
+        }
+    }
 #endif
 }
 

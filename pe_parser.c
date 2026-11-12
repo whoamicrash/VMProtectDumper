@@ -131,6 +131,12 @@ int read_pe_sections(HANDLE hProc, DWORD64 base)
     WORD machine = *(WORD*)(pe + 4);
     WORD num_secs = *(WORD*)(pe + 6);
     WORD opt_size = *(WORD*)(pe + 20);
+    if (pe_off + 24 + (DWORD)opt_size + (DWORD)num_secs * 40 > sizeof(hdr)) {
+        printf("[-] PE section table out of bounds (pe_off=0x%X opt=0x%X secs=%u)\n",
+               pe_off, opt_size, (unsigned)num_secs);
+        return 0;
+    }
+
     BYTE *sec_tbl = pe + 24 + opt_size;
 
     g_machine = machine;
@@ -349,6 +355,25 @@ void capture_oep(HANDLE hProc, HANDLE hThread, DWORD64 base, DWORD soi)
     printf("\n[*] Capturing OEP...\n");
 
     if (hThread) {
+        if (g_machine == IMAGE_FILE_MACHINE_I386) {
+            WOW64_CONTEXT wctx;
+            memset(&wctx, 0, sizeof(wctx));
+            wctx.ContextFlags = WOW64_CONTEXT_CONTROL;
+            if (Wow64GetThreadContext(hThread, &wctx)) {
+                DWORD64 ip = wctx.Eip;
+                if (ip >= base && ip < base + soi) {
+                    thread_rva = (DWORD)(ip - base);
+                    printf("[+] Thread IP at suspend (WOW64): RVA=0x%08X (VA=0x%llX)\n",
+                           thread_rva, (unsigned long long)ip);
+                } else {
+                    printf("[*] Thread IP outside image (WOW64): VA=0x%llX\n",
+                           (unsigned long long)ip);
+                }
+            } else {
+                printf("[-] Wow64GetThreadContext failed (error %u)\n",
+                       (unsigned)GetLastError());
+            }
+        } else {
         CONTEXT ctx;
         memset(&ctx, 0, sizeof(ctx));
         ctx.ContextFlags = CONTEXT_CONTROL;
@@ -369,6 +394,7 @@ void capture_oep(HANDLE hProc, HANDLE hThread, DWORD64 base, DWORD soi)
             }
         } else {
             printf("[!] GetThreadContext failed (error %u)\n", (unsigned)GetLastError());
+        }
         }
     }
 
@@ -459,6 +485,11 @@ void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
         return;
 
     DWORD pe_off = *(DWORD*)(hdr + 0x3C);
+    if (pe_off == 0 || pe_off + 256 > sizeof(hdr) ||
+        hdr[pe_off] != 'P' || hdr[pe_off + 1] != 'E') {
+        printf("[-] PE header offset invalid (0x%X)\n", pe_off);
+        return;
+    }
     WORD machine = *(WORD*)(hdr + pe_off + 4);
     DWORD soi;
 
@@ -490,7 +521,7 @@ void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
     }
 
     pe_off = *(DWORD*)(buf + 0x3C);
-    if (pe_off + 256 < soi) {
+    if (pe_off != 0 && pe_off + 256 < soi && buf[pe_off] == 'P' && buf[pe_off + 1] == 'E') {
         BYTE *pe = buf + pe_off;
 
         if (machine == 0x8664) {
@@ -501,6 +532,11 @@ void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
 
         WORD ns = *(WORD*)(pe + 6);
         WORD os = *(WORD*)(pe + 20);
+        if ((DWORD)ns > MAX_SECTIONS) ns = MAX_SECTIONS;
+        if (pe_off + 24 + (DWORD)os + (DWORD)ns * 40 >= soi) {
+            printf("[-] section table out of image bounds, header repair skipped\n");
+            ns = 0;
+        }
         BYTE *st = pe + 24 + os;
 
         for (int i = 0; i < ns && i < MAX_SECTIONS; i++) {
@@ -572,7 +608,7 @@ void dump_full_image(HANDLE hProc, DWORD64 base, const char *target_name)
     snprintf(fname, sizeof(fname), "%s\\%s_dumped.bin", g_output_dir, bname);
     FILE *f = fopen(fname, "wb");
     if (f) { fwrite(buf, 1, soi, f); fclose(f); }
-    printf("[+] Full PE dump: %s (%u bytes, %.1f MB)\n", fname, soi, soi / (1024.0 * 1024.0));
+    printf("[+] Full PE dump: %s (%lu bytes, %.1f MB)\n", fname, (unsigned long)soi, soi / (1024.0 * 1024.0));
     free(buf);
 }
 

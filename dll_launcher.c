@@ -109,7 +109,7 @@ HANDLE launch_service_dll(const char *dll_path, DWORD64 *out_dll_base, DWORD *ou
     if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,
                              (LPBYTE)&ssp, sizeof(ssp), &needed)) {
         service_pid = ssp.dwProcessId;
-        printf("[+] Service PID: %u  State: %u\n", service_pid, ssp.dwCurrentState);
+        printf("[+] Service PID: %lu  State: %lu\n", (unsigned long)service_pid, (unsigned long)ssp.dwCurrentState);
     } else {
         printf("[!] QueryServiceStatusEx failed (error %u)\n", (unsigned)GetLastError());
     }
@@ -119,10 +119,10 @@ HANDLE launch_service_dll(const char *dll_path, DWORD64 *out_dll_base, DWORD *ou
     if (service_pid != 0) {
         hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, service_pid);
         if (!hProc) {
-            printf("[-] OpenProcess PID=%u failed (error %u)\n",
-                   service_pid, (unsigned)GetLastError());
+            printf("[-] OpenProcess PID=%lu failed (error %u)\n",
+                   (unsigned long)service_pid, (unsigned)GetLastError());
         } else {
-            printf("[+] Attached to svchost PID=%u\n", service_pid);
+            printf("[+] Attached to svchost PID=%lu\n", (unsigned long)service_pid);
 
             const char *dll_basename = abs_path;
             const char *p;
@@ -146,8 +146,8 @@ HANDLE launch_service_dll(const char *dll_path, DWORD64 *out_dll_base, DWORD *ou
                             _stricmp(mod_name, dll_basename) == 0) {
                             *out_dll_base = (DWORD64)me.modBaseAddr;
                             *out_pid = service_pid;
-                            printf("[+] Found DLL at 0x%llX (size: %u)\n",
-                                   (unsigned long long)*out_dll_base, me.modBaseSize);
+                            printf("[+] Found DLL at 0x%llX (size: %lu)\n",
+                                   (unsigned long long)*out_dll_base, (unsigned long)me.modBaseSize);
                             printf("    Path: %s\n", mod_path);
                             break;
                         }

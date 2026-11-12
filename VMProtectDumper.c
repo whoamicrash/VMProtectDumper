@@ -22,7 +22,7 @@ static int          g_force_dropper = 0;
 
 static int          g_dropper_timeout = 60;
 
-int  g_no_triton = 0;
+int  g_no_smt = 0;
 
 static int  g_no_hooks = 0;
 
@@ -34,34 +34,17 @@ DWORD        g_oep_crt_rva = 0;
 
 int          g_harvest_enabled = 1;
 
-static BYTE g_gpa_orig[16];
+long g_smt_resolved = -1;
 
-static BYTE g_lla_orig[16];
+long g_smt_unresolved = 0;
 
-static BYTE g_llw_orig[16];
+long g_smt_already_real = 0;
 
-static DWORD64 g_gpa_addr = 0;
+long g_smt_collatz = 0;
 
-static DWORD64 g_lla_addr = 0;
+long g_smt_bombs = 0;
 
-static DWORD64 g_llw_addr = 0;
-
-
-
-
-static int   g_no_hook = 0;
-
-long g_triton_resolved = -1;
-
-long g_triton_unresolved = 0;
-
-long g_triton_already_real = 0;
-
-long g_triton_collatz = 0;
-
-long g_triton_bombs = 0;
-
-unsigned long long g_triton_instr = 0;
+unsigned long long g_smt_instr = 0;
 
 static void dump_all(HANDLE hProc, DWORD64 base, const char *target_name)
 {
@@ -77,7 +60,7 @@ static void dump_all(HANDLE hProc, DWORD64 base, const char *target_name)
     scan_iat_slots(hProc, base);
     scan_for_iat_entries(hProc, base);
     write_dump_metadata(hProc, base, target_name);
-    triton_run(target_name);
+    smt_run(target_name);
     scan_process_strings(hProc);
 
     if (g_harvest_enabled) {
@@ -135,9 +118,74 @@ char g_zip_path[MAX_PATH] = "";
 
 char g_zip_password[256] = "";
 
+static void write_repair_summary(void)
+{
+    char sum_path[MAX_PATH];
+    snprintf(sum_path, sizeof(sum_path), "%s\\repair_summary.json", g_output_dir);
+    FILE *sf = fopen(sum_path, "w");
+    if (!sf) return;
+    LONG ic = g_import_count;
+    if (ic > MAX_IMPORTS) ic = MAX_IMPORTS;
+    int named = 0;
+    for (int i = 0; i < g_resolved_iat_count; i++)
+        if (g_resolved_iat[i].import_idx >= 0 || g_resolved_iat[i].module[0] != '\0') named++;
+
+    fprintf(sf, "{\n");
+    fprintf(sf, "  \"version\": \"" VMPD_VERSION "\",\n");
+    fprintf(sf, "  \"machine\": \"0x%04X\",\n", (unsigned)g_machine);
+    fprintf(sf, "  \"machine_name\": \"%s\",\n",
+            g_machine == 0x8664 ? "x64" : g_machine == 0x14C ? "x86" : "unknown");
+    fprintf(sf, "  \"image_base\": \"0x%llX\",\n", (unsigned long long)g_image_base);
+    fprintf(sf, "  \"size_of_image\": \"0x%llX\",\n", (unsigned long long)g_size_of_image);
+    fprintf(sf, "  \"oep_captured\": %s,\n", g_oep_captured ? "true" : "false");
+    fprintf(sf, "  \"oep_rva\": \"0x%08lX\",\n", (unsigned long)g_oep_rva);
+    fprintf(sf, "  \"oep_source\": \"%s\",\n",
+            g_oep_crt_rva != 0 ? "crt_pattern" :
+            g_oep_thread_rva != 0 ? "thread_ip" : "none");
+    fprintf(sf, "  \"oep_thread_rva\": \"0x%08lX\",\n", (unsigned long)g_oep_thread_rva);
+    fprintf(sf, "  \"oep_crt_rva\": \"0x%08lX\",\n", (unsigned long)g_oep_crt_rva);
+    fprintf(sf, "  \"exports_cataloged\": %ld,\n", (long)ic);
+    fprintf(sf, "  \"iat_thunks_resolved\": %d,\n", g_resolved_iat_count);
+    fprintf(sf, "  \"iat_named_imports\": %d,\n", named);
+    fprintf(sf, "  \"iat_slots_scanned\": %d,\n", g_iat_slot_count);
+    fprintf(sf, "  \"gpa_hook_installed\": %d,\n", g_hook_installed_count);
+    fprintf(sf, "  \"vid_fixes\": %d,\n", g_vid_fix_count);
+    fprintf(sf, "  \"orig_imports_parsed\": %d,\n", g_orig_import_count);
+    fprintf(sf, "  \"smt_resolved\": %ld,\n", g_smt_resolved);
+    fprintf(sf, "  \"smt_unresolved\": %ld,\n", g_smt_unresolved);
+    fprintf(sf, "  \"smt_already_real\": %ld,\n", g_smt_already_real);
+    fprintf(sf, "  \"smt_collatz_bypasses\": %ld,\n", g_smt_collatz);
+    fprintf(sf, "  \"smt_loop_bombs\": %ld,\n", g_smt_bombs);
+    fprintf(sf, "  \"smt_instructions\": %llu,\n", (unsigned long long)g_smt_instr);
+
+    fprintf(sf, "  \"resolved_iat\": [\n");
+    for (int i = 0; i < g_resolved_iat_count; i++) {
+        ResolvedIATEntry *re = &g_resolved_iat[i];
+        fprintf(sf, "    {\"iat_rva\": \"0x%08lX\", ", (unsigned long)re->iat_rva);
+        fprintf(sf, "\"thunk_addr\": \"0x%llX\", ", (unsigned long long)re->thunk_addr);
+        fprintf(sf, "\"resolved_addr\": \"0x%llX\"", (unsigned long long)re->resolved_addr);
+        if (re->import_idx >= 0 || re->module[0] != '\0') {
+            fprintf(sf, ", \"module\": \"");
+            json_escape(sf, re->module);
+            fprintf(sf, "\", \"function\": \"");
+            json_escape(sf, re->function);
+            fprintf(sf, "\"");
+        }
+        fprintf(sf, "}%s\n", (i < g_resolved_iat_count - 1) ? "," : "");
+    }
+    fprintf(sf, "  ]\n");
+    fprintf(sf, "}\n");
+    fclose(sf);
+    printf("\n  Repair summary: %s\n", sum_path);
+    printf("  OEP: 0x%08lX (%s) | IAT patched: %d | Named: %d\n",
+           (unsigned long)g_oep_rva,
+           g_oep_crt_rva != 0 ? "CRT" : g_oep_thread_rva != 0 ? "TIP" : "none",
+           g_resolved_iat_count, named);
+}
+
 int main(int argc, char *argv[])
 {
-    printf("  VMProtect Dumper, don't sell source code\n");
+    printf("  VMProtect Dumper v" VMPD_VERSION " (SMT engine) - don't sell source code\n");
 
     int kill_vmtools = 0;
 
@@ -161,8 +209,11 @@ int main(int argc, char *argv[])
         printf("  --pesieve-path=PATH Path to pe-sieve exe (default: auto-detect)\n");
         printf("  --zip-password=PW   Protect the output archive with your own password\n");
         printf("                      (without this argument the archive is NOT encrypted)\n");
-        printf("  --no-triton         Disable the Triton-style post-dump analysis engine\n");
-        printf("                      (default: enabled, writes triton_*.txt/json reports)\n\n");
+        printf("  --no-smt            Disable the SMT post-dump analysis engine\n");
+        printf("                      (default: enabled, writes smt_*.txt/json reports)\n");
+        printf("  --no-hooks          Disable inline GetProcAddress/LoadLibrary hooks\n");
+        printf("                      (read-based IAT rebuild + SMT engine stay active)\n");
+        printf("  --no-antidebug      Do not neutralize anti-debug checks in the target\n\n");
         printf("DLL examples:\n");
         printf("  %s target.dll\n", argv[0]);
         printf("  %s target.dll --dll-export=ServiceMain\n", argv[0]);
@@ -201,8 +252,8 @@ int main(int argc, char *argv[])
         } else if (strncmp(argv[i], "--zip-password=", 15) == 0) {
             strncpy(g_zip_password, argv[i] + 15, sizeof(g_zip_password) - 1);
             g_zip_password[sizeof(g_zip_password) - 1] = '\0';
-        } else if (strcmp(argv[i], "--no-triton") == 0) {
-            g_no_triton = 1;
+        } else if (strcmp(argv[i], "--no-smt") == 0) {
+            g_no_smt = 1;
         } else if (strcmp(argv[i], "--no-hooks") == 0) {
             g_no_hooks = 1;
         } else if (strcmp(argv[i], "--no-antidebug") == 0) {
@@ -272,7 +323,6 @@ int main(int argc, char *argv[])
     HANDLE hTargetProc = NULL;
     HANDLE hTargetThread = NULL;
     DWORD  target_pid = 0;
-    int    own_process = 0;
 
     if (g_is_service_dll) {
         DWORD64 svc_dll_base = 0;
@@ -287,7 +337,6 @@ int main(int argc, char *argv[])
         }
         target_pid = svc_pid;
         g_image_base = svc_dll_base;
-        own_process = 0;
 
         if (!read_pe_sections(hTargetProc, g_image_base)) {
             printf("[-] Cannot read PE sections from service DLL\n");
@@ -327,7 +376,7 @@ int main(int argc, char *argv[])
             memset(&si2, 0, sizeof(si2)); si2.cb = sizeof(si2);
             memset(&pi2, 0, sizeof(pi2));
             CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si2, &pi2);
-            printf("[+] Launched dropper PID=%u\n", pi2.dwProcessId);
+            printf("[+] Launched dropper PID=%lu\n", (unsigned long)pi2.dwProcessId);
             CloseHandle(pi2.hThread);
 
             TargetInfo found;
@@ -347,7 +396,6 @@ int main(int argc, char *argv[])
                 hTargetThread = found.hThread;
                 target_pid = found.pid;
                 g_image_base = found.image_base;
-                own_process = 0;
 
                 int assess = attach_and_assess(hTargetProc, hTargetThread, g_image_base);
                 if (assess == 1) skip_monitor = 1;
@@ -375,7 +423,6 @@ int main(int argc, char *argv[])
                 hTargetThread = found.hThread;
                 target_pid = found.pid;
                 g_image_base = found.image_base;
-                own_process = 0;
                 int assess = attach_and_assess(hTargetProc, hTargetThread, g_image_base);
                 if (assess == 1) skip_monitor = 1;
                 else if (assess < 0) { hTargetProc = NULL; hTargetThread = NULL; }
@@ -400,7 +447,6 @@ int main(int argc, char *argv[])
                     hTargetThread = found.hThread;
                     target_pid = found.pid;
                     g_image_base = found.image_base;
-                    own_process = 0;
                     int assess = attach_and_assess(hTargetProc, hTargetThread, g_image_base);
                     if (assess == 1) skip_monitor = 1;
                     else if (assess < 0) { hTargetProc = NULL; hTargetThread = NULL; }
@@ -624,11 +670,10 @@ int main(int argc, char *argv[])
                 if (!g_no_pause) getchar();
                 return 1;
             }
-            printf("[+] PID=%u TID=%u\n", pi.dwProcessId, pi.dwThreadId);
+            printf("[+] PID=%lu TID=%lu\n", (unsigned long)pi.dwProcessId, (unsigned long)pi.dwThreadId);
             hTargetProc = pi.hProcess;
             hTargetThread = pi.hThread;
             target_pid = pi.dwProcessId;
-            own_process = 1;
 
             CONTEXT ctx;
             memset(&ctx, 0, sizeof(ctx));
@@ -721,8 +766,8 @@ int main(int argc, char *argv[])
 
                             if (_stricmp(mod_path, abs_dll) == 0) {
                                 dll_base = (DWORD64)me.modBaseAddr;
-                                printf("[+] Found DLL module at 0x%llX (size: %u)\n",
-                                       (unsigned long long)dll_base, me.modBaseSize);
+                                printf("[+] Found DLL module at 0x%llX (size: %lu)\n",
+                                       (unsigned long long)dll_base, (unsigned long)me.modBaseSize);
                                 g_image_base = dll_base;
                                 g_num_sections = 0;
                                 read_pe_sections(pi.hProcess, dll_base);
@@ -904,6 +949,8 @@ int main(int argc, char *argv[])
 
     }
 
+    write_repair_summary();
+
     int zip_ok = create_output_zip(g_output_dir);
 
     printf("\n=======================================================\n");
@@ -930,71 +977,6 @@ int main(int argc, char *argv[])
     printf("    region_*.bin          Dynamic executable regions\n");
     printf("    pesieve_out/          PE-sieve scan results\n");
     printf("=======================================================\n");
-
-    {
-        char sum_path[MAX_PATH];
-        snprintf(sum_path, sizeof(sum_path), "%s\\repair_summary.json", g_output_dir);
-        FILE *sf = fopen(sum_path, "w");
-        if (sf) {
-            LONG ic = g_import_count;
-            if (ic > MAX_IMPORTS) ic = MAX_IMPORTS;
-            int named = 0;
-            for (int i = 0; i < g_resolved_iat_count; i++)
-                if (g_resolved_iat[i].import_idx >= 0 || g_resolved_iat[i].module[0] != '\0') named++;
-
-            fprintf(sf, "{\n");
-            fprintf(sf, "  \"version\": \"5.0\",\n");
-            fprintf(sf, "  \"machine\": \"0x%04X\",\n", (unsigned)g_machine);
-            fprintf(sf, "  \"machine_name\": \"%s\",\n",
-                    g_machine == 0x8664 ? "x64" : g_machine == 0x14C ? "x86" : "unknown");
-            fprintf(sf, "  \"image_base\": \"0x%llX\",\n", (unsigned long long)g_image_base);
-            fprintf(sf, "  \"size_of_image\": \"0x%llX\",\n", (unsigned long long)g_size_of_image);
-            fprintf(sf, "  \"oep_captured\": %s,\n", g_oep_captured ? "true" : "false");
-            fprintf(sf, "  \"oep_rva\": \"0x%08lX\",\n", (unsigned long)g_oep_rva);
-            fprintf(sf, "  \"oep_source\": \"%s\",\n",
-                    g_oep_crt_rva != 0 ? "crt_pattern" :
-                    g_oep_thread_rva != 0 ? "thread_ip" : "none");
-            fprintf(sf, "  \"oep_thread_rva\": \"0x%08lX\",\n", (unsigned long)g_oep_thread_rva);
-            fprintf(sf, "  \"oep_crt_rva\": \"0x%08lX\",\n", (unsigned long)g_oep_crt_rva);
-            fprintf(sf, "  \"exports_cataloged\": %ld,\n", (long)ic);
-            fprintf(sf, "  \"iat_thunks_resolved\": %d,\n", g_resolved_iat_count);
-            fprintf(sf, "  \"iat_named_imports\": %d,\n", named);
-            fprintf(sf, "  \"iat_slots_scanned\": %d,\n", g_iat_slot_count);
-            fprintf(sf, "  \"gpa_hook_installed\": %d,\n", g_hook_installed_count);
-            fprintf(sf, "  \"vid_fixes\": %d,\n", g_vid_fix_count);
-            fprintf(sf, "  \"orig_imports_parsed\": %d,\n", g_orig_import_count);
-            fprintf(sf, "  \"triton_resolved\": %ld,\n", g_triton_resolved);
-            fprintf(sf, "  \"triton_unresolved\": %ld,\n", g_triton_unresolved);
-            fprintf(sf, "  \"triton_already_real\": %ld,\n", g_triton_already_real);
-            fprintf(sf, "  \"triton_collatz_bypasses\": %ld,\n", g_triton_collatz);
-            fprintf(sf, "  \"triton_loop_bombs\": %ld,\n", g_triton_bombs);
-            fprintf(sf, "  \"triton_instructions\": %llu,\n", (unsigned long long)g_triton_instr);
-
-            fprintf(sf, "  \"resolved_iat\": [\n");
-            for (int i = 0; i < g_resolved_iat_count; i++) {
-                ResolvedIATEntry *re = &g_resolved_iat[i];
-                fprintf(sf, "    {\"iat_rva\": \"0x%08lX\", ", (unsigned long)re->iat_rva);
-                fprintf(sf, "\"thunk_addr\": \"0x%llX\", ", (unsigned long long)re->thunk_addr);
-                fprintf(sf, "\"resolved_addr\": \"0x%llX\"", (unsigned long long)re->resolved_addr);
-                if (re->import_idx >= 0 || re->module[0] != '\0') {
-                    fprintf(sf, ", \"module\": \"");
-                    json_escape(sf, re->module);
-                    fprintf(sf, "\", \"function\": \"");
-                    json_escape(sf, re->function);
-                    fprintf(sf, "\"");
-                }
-                fprintf(sf, "}%s\n", (i < g_resolved_iat_count - 1) ? "," : "");
-            }
-            fprintf(sf, "  ]\n");
-            fprintf(sf, "}\n");
-            fclose(sf);
-            printf("\n  Repair summary: %s\n", sum_path);
-            printf("  OEP: 0x%08lX (%s) | IAT patched: %d | Named: %d\n",
-                   (unsigned long)g_oep_rva,
-                   g_oep_crt_rva != 0 ? "CRT" : g_oep_thread_rva != 0 ? "TIP" : "none",
-                   g_resolved_iat_count, named);
-        }
-    }
 
     if (!g_no_pause) {
         printf("\nPress Enter to exit...");

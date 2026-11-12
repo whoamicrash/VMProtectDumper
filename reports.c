@@ -49,7 +49,7 @@ void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_name)
     }
 
     fprintf(f, "{\n");
-    fprintf(f, "  \"dumper_version\": \"4.0\",\n");
+    fprintf(f, "  \"dumper_version\": \"" VMPD_VERSION "\",\n");
     fprintf(f, "  \"machine\": \"0x%04X\",\n", g_machine);
     fprintf(f, "  \"image_base\": \"0x%llX\",\n", (unsigned long long)base);
     fprintf(f, "  \"size_of_image\": \"0x%X\",\n", g_size_of_image);
@@ -89,6 +89,42 @@ void write_dump_metadata(HANDLE hProc, DWORD64 base, const char *target_name)
     fprintf(f, "    \"resource\": {\"rva\": \"0x%08X\", \"size\": \"0x%08X\"}\n",
             dd_rsrc_rva, dd_rsrc_size);
     fprintf(f, "  },\n");
+
+    {
+        DWORD64 tls_dir = base + (DWORD64)dd_tls_rva;
+        DWORD64 cb_array_va = 0;
+        BYTE tdir[64];
+        SIZE_T tn = 0;
+        DWORD64 cbs[64];
+        int tls_n = 0;
+        memset(cbs, 0, sizeof(cbs));
+        if (dd_tls_rva && ReadProcessMemory(hProc, (LPCVOID)(ULONG_PTR)tls_dir,
+                                            tdir, g_machine == 0x8664 ? 40 : 24, &tn)) {
+            if (g_machine == 0x8664) {
+                cb_array_va = *(DWORD64*)(tdir + 24);
+            } else {
+                cb_array_va = *(DWORD*)(tdir + 12);
+            }
+        }
+        if (cb_array_va) {
+            for (int i = 0; i < 64; i++) {
+                DWORD64 cb = 0;
+                SIZE_T cn = 0;
+                DWORD64 slot = cb_array_va + (DWORD64)(g_machine == 0x8664 ? 8 : 4) * (DWORD64)i;
+                if (!ReadProcessMemory(hProc, (LPCVOID)(ULONG_PTR)slot, &cb,
+                                       g_machine == 0x8664 ? 8 : 4, &cn))
+                    break;
+                if (!cb) break;
+                cbs[tls_n++] = cb;
+            }
+        }
+        fprintf(f, "  \"tls_callbacks\": [");
+        for (int i = 0; i < tls_n; i++)
+            fprintf(f, "\n    \"0x%llX\"%s", (unsigned long long)cbs[i],
+                    (i < tls_n - 1) ? "," : "");
+        fprintf(f, "%s],\n", tls_n ? "\n  " : "");
+        fprintf(f, "  \"tls_callbacks_va\": \"0x%llX\",\n", (unsigned long long)cb_array_va);
+    }
 
     LONG imp_count = g_import_count;
     if (imp_count > MAX_IMPORTS) imp_count = MAX_IMPORTS;

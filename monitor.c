@@ -138,21 +138,24 @@ void capture_dropped_files(const char *target_dir)
             is_note = 1;
         }
 
-        if (is_note) {
+        const char *ext = strrchr(name, '.');
+        int is_pe = 0;
+        if (ext && (_stricmp(ext, ".exe") == 0 || _stricmp(ext, ".dll") == 0 ||
+                    _stricmp(ext, ".scr") == 0 || _stricmp(ext, ".com") == 0 ||
+                    _stricmp(ext, ".pif") == 0 || _stricmp(ext, ".sys") == 0)) {
+            is_pe = 1;
+        }
 
-            const char *ext = strrchr(name, '.');
-            if (ext && (_stricmp(ext, ".exe") == 0 || _stricmp(ext, ".dll") == 0 ||
-                        _stricmp(ext, ".scr") == 0 || _stricmp(ext, ".com") == 0)) {
-                printf("    Skipped PE: %s\n", name);
-                continue;
-            }
+        if (is_note || is_pe) {
 
             char src[MAX_PATH], dst[MAX_PATH];
             snprintf(src, sizeof(src), "%s\\%s", target_dir, name);
-            snprintf(dst, sizeof(dst), "%s\\%s", g_output_dir, name);
+            snprintf(dst, sizeof(dst), "%s\\%s", g_output_dir,
+                     is_pe ? name : name);
 
             if (CopyFileA(src, dst, FALSE)) {
-                printf("[+] Captured dropped file: %s (%lu bytes)\n", name, fd.nFileSizeLow);
+                printf("[+] Captured dropped file%s: %s (%lu bytes)\n",
+                       is_pe ? " (PE)" : "", name, fd.nFileSizeLow);
                 found++;
             }
         }
@@ -184,8 +187,7 @@ void kill_monitor_processes(int kill_vmtools)
         "Sniff_hit.exe", "joeboxcontrol.exe", "joeboxserver.exe",
         "ResourceHacker.exe", "BehaviorDumper.exe",
         "idag.exe", "idag64.exe", "immunitydebugger.exe",
-        "agent.exe", "analyzer.exe", "cuckoomon.exe",
-        "python.exe", "pythonw.exe",
+        "cuckoomon.exe",
         "apimonitor.exe", "apimonitor-x86.exe", "apimonitor-x64.exe",
         "OLLYDBG.EXE", "windbg.exe", "dbgview.exe",
         "Dbgview.exe", "DebugView.exe",
@@ -267,9 +269,22 @@ void kill_monitor_processes(int kill_vmtools)
     }
 }
 
+static DWORD harvest_start_tick = 0;
+
+static float harvest_elapsed_sec(void)
+{
+    return (float)(GetTickCount() - harvest_start_tick) / 1000.0f;
+}
+
 void harvest_init(void)
 {
+    char saved_pesieve[MAX_PATH];
+    strncpy(saved_pesieve, g_harvest.pesieve_path, MAX_PATH - 1);
+    saved_pesieve[MAX_PATH - 1] = '\0';
     memset(&g_harvest, 0, sizeof(g_harvest));
+    if (saved_pesieve[0])
+        strncpy(g_harvest.pesieve_path, saved_pesieve, MAX_PATH - 1);
+    harvest_start_tick = GetTickCount();
 
     g_harvest_watch_count = 0;
     char buf[MAX_PATH];
@@ -429,14 +444,14 @@ int check_region_changes(void)
             printf("[!] HARVEST: NEW exec region " ADDR_FMT " (%u bytes, prot=0x%X)\n",
                    ADDR_CAST(cr->base_addr), (unsigned)cr->size, cr->protect);
             harvest_log("[T+%.1fs] Snap #%d: NEW region " ADDR_FMT " (%u bytes)",
-                        (float)g_harvest.current.tick_ms / 1000.0f,
+                        harvest_elapsed_sec(),
                         g_harvest.current.index,
                         ADDR_CAST(cr->base_addr), (unsigned)cr->size);
         }
         if (cr->fp_changed) {
             fp_changes++;
             harvest_log("[T+%.1fs] Snap #%d: CHANGED fp at " ADDR_FMT,
-                        (float)g_harvest.current.tick_ms / 1000.0f,
+                        harvest_elapsed_sec(),
                         g_harvest.current.index,
                         ADDR_CAST(cr->base_addr));
         }
@@ -454,7 +469,7 @@ int check_region_changes(void)
         if (!found) {
             disappeared++;
             harvest_log("[T+%.1fs] Snap #%d: DISAPPEARED region " ADDR_FMT,
-                        (float)g_harvest.current.tick_ms / 1000.0f,
+                        harvest_elapsed_sec(),
                         g_harvest.current.index,
                         ADDR_CAST(g_harvest.previous.regions[j].base_addr));
         }
@@ -681,7 +696,7 @@ int check_behavioral_trigger(void)
         g_harvest.new_file_count = new_files;
         printf("[!] HARVEST: Behavioral trigger - %d new files in watched dirs\n", new_files);
         harvest_log("[T+%.1fs] BEHAVIORAL: %d new files detected",
-                    (float)GetTickCount() / 1000.0f, new_files);
+                    harvest_elapsed_sec(), new_files);
     }
     return new_files;
 }
@@ -694,7 +709,7 @@ void write_harvest_report(DWORD total_elapsed_ms)
     FILE *f = fopen(rpath, "w");
     if (!f) return;
 
-    fprintf(f, "=== Clarity Memory Harvester v5.0 Report ===\n");
+    fprintf(f, "=== Clarity Memory Harvester v" VMPD_VERSION " Report ===\n");
     fprintf(f, "Target architecture: %s\n", (g_machine == 0x14c) ? "x86" : "x64");
     fprintf(f, "Image base: 0x%llX\n", (unsigned long long)g_image_base);
     fprintf(f, "Size of image: 0x%08X\n", g_size_of_image);
